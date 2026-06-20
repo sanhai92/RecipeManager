@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>RecipeManager</AssemblyName>
+    <RootNamespace>RecipeManager</RootNamespace>
+    <Version>1.0.0</Version>
+    <UpdateRepository Condition="'$(UpdateRepository)' == ''"></UpdateRepository>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="UpdateRepository" Value="$(UpdateRepository)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+  </ItemGroup>
+</Project>

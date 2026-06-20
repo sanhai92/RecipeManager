@@ -1,0 +1,70 @@
+name: Build Windows installer
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, for example 1.1.0"
+        required: true
+        default: "1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      REPOSITORY: ${{ github.repository }}
+      VERSION_INPUT: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Determine version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          } else {
+            $version = $env:VERSION_INPUT
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Version must use x.y.z format." }
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Publish self-contained app
+        shell: pwsh
+        run: |
+          dotnet publish RecipeManager.csproj -c Release -r win-x64 --self-contained true `
+            -o artifacts/publish -p:Version=$env:VERSION -p:UpdateRepository=$env:REPOSITORY
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$env:VERSION" "installer\RecipeManager.iss"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RecipeManager-Setup
+          path: artifacts/installer/RecipeManager-Setup-*.exe
+
+      - name: Create GitHub release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" `
+            "artifacts/installer/RecipeManager-Setup-$env:VERSION.exe" `
+            --title "Recipe Manager $env:VERSION" --generate-notes

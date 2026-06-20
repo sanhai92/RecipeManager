@@ -1,0 +1,66 @@
+<Window x:Class="RecipeManager.IngredientManagerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Manage ingredients" Height="600" Width="720" MinHeight="480" MinWidth="650"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
+    <Border Margin="18" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource GardenBorderBrush}"
+            BorderThickness="1" CornerRadius="10" Padding="24">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel>
+                <TextBlock Text="Ingredient library" FontSize="25" FontWeight="Bold" Foreground="{StaticResource HeaderBrush}"/>
+                <TextBlock Text="Recipe editing and pantry search use names from this library."
+                           Foreground="{StaticResource MutedBrush}" Margin="0,4,0,16"/>
+            </StackPanel>
+
+            <Grid Grid.Row="1" Margin="0,0,0,14">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="150"/>
+                    <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="130"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="Name" FontWeight="SemiBold" Foreground="{StaticResource HeaderBrush}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="NameBox" FontSize="15" VerticalContentAlignment="Center"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="Plural (optional)" FontWeight="SemiBold" Foreground="{StaticResource HeaderBrush}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="PluralNameBox" FontSize="15" VerticalContentAlignment="Center" ToolTip="For example: apples"/>
+                </StackPanel>
+                <StackPanel Grid.Column="4">
+                    <TextBlock Text="Season (optional)" FontWeight="SemiBold" Foreground="{StaticResource HeaderBrush}" Margin="0,0,0,4"/>
+                    <ComboBox x:Name="SeasonBox" Padding="8,7" BorderBrush="{StaticResource GardenBorderBrush}" Background="#FFFFFA"/>
+                </StackPanel>
+                <Button Grid.Column="5" Content="Add ingredient" Click="Add_Click" Margin="10,21,0,0"
+                        VerticalAlignment="Top" Background="{StaticResource LemonBrush}" Foreground="{StaticResource DarkTextBrush}"/>
+            </Grid>
+
+            <ListBox x:Name="IngredientList" Grid.Row="2" SelectionChanged="IngredientList_SelectionChanged"
+                     BorderBrush="{StaticResource GardenBorderBrush}" BorderThickness="1" Background="#FFFFFA">
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayName}" Padding="8,5" FontSize="14" Foreground="{StaticResource DarkTextBrush}"/>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+
+            <Grid Grid.Row="3" Margin="0,16,0,0">
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Save changes" Click="Rename_Click"/>
+                    <Button Content="Delete selected" Click="Delete_Click" Background="{StaticResource PeachBrush}" Foreground="#542619"/>
+                </StackPanel>
+                <Button Content="Close" Click="Close_Click" HorizontalAlignment="Right"
+                        Background="{StaticResource MintStrongBrush}" Foreground="{StaticResource DarkTextBrush}" Margin="0"/>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

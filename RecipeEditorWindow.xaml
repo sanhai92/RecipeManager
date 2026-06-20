@@ -1,0 +1,103 @@
+<Window x:Class="RecipeManager.RecipeEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Recipe" Height="820" Width="760" MinHeight="700" MinWidth="650"
+        WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
+    <Border Margin="18" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource GardenBorderBrush}" BorderThickness="1" CornerRadius="10" Padding="24">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="Recipe name" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+            <TextBox x:Name="TitleBox" FontSize="16"/>
+        </StackPanel>
+
+        <Grid Grid.Row="1" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="18"/>
+                <ColumnDefinition Width="155"/>
+                <ColumnDefinition Width="18"/>
+                <ColumnDefinition Width="100"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Cuisine" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox x:Name="CuisineBox"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Cooking time (minutes)" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox x:Name="CookingTimeBox"/>
+            </StackPanel>
+            <StackPanel Grid.Column="4">
+                <TextBlock Text="Servings" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox x:Name="ServingsBox"/>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="24"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Ingredients" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox x:Name="IngredientSearchBox" TextChanged="IngredientSearchBox_TextChanged"
+                         ToolTip="Search the ingredient library" Margin="0,0,0,6"/>
+                <DataGrid x:Name="IngredientChoicesList" Height="106" AutoGenerateColumns="False" CanUserAddRows="False"
+                          HeadersVisibility="Column" GridLinesVisibility="Horizontal" BorderBrush="{StaticResource GardenBorderBrush}"
+                          BorderThickness="1" Background="#FFFFFA" RowBackground="#FFFFFA" AlternatingRowBackground="{StaticResource MintBrush}">
+                    <DataGrid.Columns>
+                        <DataGridCheckBoxColumn Header="Use" Binding="{Binding IsSelected, Mode=TwoWay}" Width="42"/>
+                        <DataGridTextColumn Header="Ingredient" Binding="{Binding DisplayName}" IsReadOnly="True" Width="*"/>
+                        <DataGridTextColumn Header="Qty" Binding="{Binding QuantityText, UpdateSourceTrigger=PropertyChanged}" Width="55"/>
+                        <DataGridTextColumn Header="Unit" Binding="{Binding Unit, UpdateSourceTrigger=PropertyChanged}" Width="70"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Kitchen tools (one per line)" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox x:Name="ToolsBox" Height="150" AcceptsReturn="True" VerticalScrollBarVisibility="Auto"/>
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="3" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="24"/>
+                <ColumnDefinition Width="220"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="Recipe URL" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <TextBox x:Name="UrlBox" ToolTip="For example: https://example.com/recipe"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+                <TextBlock Text="Picture" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Choose…" Click="ChoosePicture_Click" Padding="12,8"/>
+                    <Button Content="Remove" Click="RemovePicture_Click" Background="{StaticResource PeachBrush}" Foreground="#542619" Padding="12,8" Margin="0"/>
+                </StackPanel>
+                <TextBlock x:Name="PictureStatusText" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/>
+            </StackPanel>
+        </Grid>
+
+        <StackPanel Grid.Row="4" Margin="0,16,0,0">
+            <TextBlock Text="Instructions" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+            <TextBox x:Name="InstructionsBox" AcceptsReturn="True" TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" MinHeight="110"/>
+        </StackPanel>
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
+            <Button Content="Cancel" Click="Cancel_Click" Background="{StaticResource MintStrongBrush}" Foreground="{StaticResource DarkTextBrush}"/>
+            <Button Content="Save recipe" Click="Save_Click" Background="{StaticResource LemonBrush}" Foreground="{StaticResource DarkTextBrush}" Margin="0"/>
+        </StackPanel>
+    </Grid>
+    </Border>
+</Window>
