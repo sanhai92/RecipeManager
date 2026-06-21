@@ -7,6 +7,7 @@ using System.Windows.Documents;
 using System.Diagnostics;
 using System.IO;
 using System.Globalization;
+using Microsoft.Win32;
 using RecipeManager.Data;
 using RecipeManager.Models;
 using RecipeManager.Services;
@@ -377,18 +378,34 @@ public partial class MainWindow : Window
         _ => "Winter"
     };
 
+    private void HighlightAvailableUpdate(UpdateCheckResult result)
+    {
+        UpdateButton.Content = $"↑ Update {result.LatestVersion} available";
+        UpdateButton.Tag = result.ReleaseUrl;
+        UpdateButton.ToolTip = "A newer version of Recipe Manager is ready to install";
+        UpdateButton.Background = (Brush)FindResource("LemonBrush");
+        UpdateButton.Foreground = (Brush)FindResource("DarkTextBrush");
+        UpdateButton.FontWeight = FontWeights.Bold;
+        UpdateButton.Padding = new Thickness(10, 4, 10, 4);
+    }
+
+    private void ResetUpdateButton()
+    {
+        UpdateButton.Content = "Check for updates";
+        UpdateButton.Tag = null;
+        UpdateButton.ToolTip = null;
+        UpdateButton.Background = Brushes.Transparent;
+        UpdateButton.Foreground = (Brush)FindResource("PrimaryBrush");
+        UpdateButton.FontWeight = FontWeights.SemiBold;
+        UpdateButton.Padding = new Thickness(4, 1, 4, 1);
+    }
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= MainWindow_Loaded;
         var result = await _updateService.CheckAsync();
         if (result.IsUpdateAvailable)
-        {
-            UpdateButton.Content = $"Update {result.LatestVersion} available";
-            UpdateButton.Tag = result.ReleaseUrl;
-            UpdateButton.Background = (System.Windows.Media.Brush)FindResource("LemonBrush");
-            UpdateButton.Foreground = (System.Windows.Media.Brush)FindResource("DarkTextBrush");
-            UpdateButton.Padding = new Thickness(8, 3, 8, 3);
-        }
+            HighlightAvailableUpdate(result);
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
@@ -400,6 +417,7 @@ public partial class MainWindow : Window
 
         if (!result.IsConfigured)
         {
+            ResetUpdateButton();
             UpdateButton.Content = "Updates not configured";
             MessageBox.Show(this, "Update checks become active in builds published through the included GitHub release workflow.",
                 "Updates", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -407,20 +425,20 @@ public partial class MainWindow : Window
         }
         if (!string.IsNullOrWhiteSpace(result.Error))
         {
-            UpdateButton.Content = "Check for updates";
+            ResetUpdateButton();
             MessageBox.Show(this, $"The update check could not be completed.\n\n{result.Error}",
                 "Update check", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (!result.IsUpdateAvailable)
         {
-            UpdateButton.Content = "Check for updates";
+            ResetUpdateButton();
             MessageBox.Show(this, $"Recipe Manager {result.CurrentVersion} is up to date.",
                 "No updates available", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        UpdateButton.Content = $"Update {result.LatestVersion} available";
+        HighlightAvailableUpdate(result);
         if (string.IsNullOrWhiteSpace(result.InstallerUrl))
         {
             var openPage = MessageBox.Show(this,
@@ -439,6 +457,8 @@ public partial class MainWindow : Window
         try
         {
             UpdateButton.IsEnabled = false;
+            UpdateButton.Content = "Backing up recipes…";
+            _database.CreateBackup($"before-update-{result.LatestVersion}");
             var progress = new Progress<double>(value => UpdateButton.Content = $"Downloading… {value:0}%");
             var installer = await _updateService.DownloadInstallerAsync(result, progress);
             UpdateButton.Content = "Installing…";
@@ -452,9 +472,62 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             UpdateButton.IsEnabled = true;
-            UpdateButton.Content = "Check for updates";
+            ResetUpdateButton();
             MessageBox.Show(this, $"The update could not be installed.\n\n{ex.Message}",
                 "Update failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void BackupRecipes_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var backupPath = _database.CreateBackup();
+            StatusText.Text = "Recipe backup created";
+            MessageBox.Show(this,
+                $"Your recipes and pictures were backed up successfully.\n\n{backupPath}\n\nThe five newest backups are kept automatically.",
+                "Backup complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"The backup could not be created.\n\n{ex.Message}",
+                "Backup failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void RestoreRecipes_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Restore recipe backup",
+            InitialDirectory = Directory.Exists(_database.BackupsFolder)
+                ? _database.BackupsFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Filter = "Recipe database backups (*.db)|*.db|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        var answer = MessageBox.Show(this,
+            "Restore this backup?\n\nYour current recipes will first be backed up automatically, then replaced by the selected copy.",
+            "Restore recipes", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes) return;
+
+        try
+        {
+            _database.RestoreBackup(dialog.FileName);
+            LoadPantryChoices();
+            ReloadRecipes();
+            StatusText.Text = "Recipe backup restored";
+            MessageBox.Show(this, "Your recipes and pictures were restored successfully.",
+                "Restore complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                $"The backup could not be restored. Your previous database has been kept.\n\n{ex.Message}",
+                "Restore failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 }

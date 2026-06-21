@@ -153,6 +153,10 @@
             <Grid>
                 <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Back up recipes" Click="BackupRecipes_Click" ToolTip="Create a safe copy of all recipes and pictures"
+                            Background="Transparent" Foreground="{StaticResource PrimaryBrush}" Padding="4,1" Margin="0,0,12,0" FontSize="12"/>
+                    <Button Content="Restore backup" Click="RestoreRecipes_Click" ToolTip="Restore recipes from a previous backup"
+                            Background="Transparent" Foreground="{StaticResource PrimaryBrush}" Padding="4,1" Margin="0,0,14,0" FontSize="12"/>
                     <TextBlock x:Name="VersionText" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0"/>
                     <TextBlock x:Name="CurrentSeasonText" Foreground="{StaticResource MutedBrush}"
                                FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0"

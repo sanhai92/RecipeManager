@@ -6,6 +6,10 @@ namespace RecipeManager.Data;
 
 public sealed class DatabaseService
 {
+    private const int CurrentSchemaVersion = 1;
+    private const int BackupRetentionCount = 5;
+    private readonly string _databasePath;
+    private readonly string _backupsFolder;
     private readonly string _connectionString;
 
     public DatabaseService()
@@ -14,17 +18,118 @@ public sealed class DatabaseService
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "RecipeManager");
         Directory.CreateDirectory(appFolder);
+        _databasePath = Path.Combine(appFolder, "recipes.db");
+        _backupsFolder = Path.Combine(appFolder, "Backups");
         _connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = Path.Combine(appFolder, "recipes.db"),
-            ForeignKeys = true
+            DataSource = _databasePath,
+            ForeignKeys = true,
+            Pooling = false
         }.ToString();
     }
 
+    public string BackupsFolder => _backupsFolder;
+
     public void Initialize()
     {
+        string? migrationBackup = null;
+        if (File.Exists(_databasePath) && new FileInfo(_databasePath).Length > 0)
+        {
+            VerifyIntegrity(_databasePath);
+            if (GetSchemaVersion() < CurrentSchemaVersion)
+                migrationBackup = CreateBackup("before-schema-update");
+        }
+
+        try
+        {
+            ApplyMigrations();
+        }
+        catch (Exception migrationError)
+        {
+            if (migrationBackup is not null)
+            {
+                File.Copy(migrationBackup, _databasePath, true);
+                throw new InvalidOperationException(
+                    "The database update failed. Your recipes were restored from the automatic backup.",
+                    migrationError);
+            }
+
+            throw;
+        }
+    }
+
+    public string CreateBackup(string purpose = "manual")
+    {
+        if (!File.Exists(_databasePath))
+            throw new InvalidOperationException("There is no recipe database to back up yet.");
+
+        VerifyIntegrity(_databasePath);
+        Directory.CreateDirectory(_backupsFolder);
+        var safePurpose = string.Concat(purpose.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_'));
+        if (string.IsNullOrWhiteSpace(safePurpose)) safePurpose = "backup";
+        var backupPath = Path.Combine(
+            _backupsFolder,
+            $"recipes-{DateTime.Now:yyyyMMdd-HHmmss}-{safePurpose}.db");
+
+        using (var source = OpenConnection())
+        using (var destination = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = backupPath,
+            ForeignKeys = true,
+            Pooling = false
+        }.ToString()))
+        {
+            destination.Open();
+            source.BackupDatabase(destination);
+        }
+
+        VerifyIntegrity(backupPath);
+        PruneBackups();
+        return backupPath;
+    }
+
+    public void RestoreBackup(string backupPath)
+    {
+        if (string.IsNullOrWhiteSpace(backupPath) || !File.Exists(backupPath))
+            throw new FileNotFoundException("The selected recipe backup could not be found.", backupPath);
+
+        VerifyIntegrity(backupPath);
+        var temporaryPath = _databasePath + ".restore";
+        string? safetyBackup = null;
+
+        try
+        {
+            File.Copy(backupPath, temporaryPath, true);
+            VerifyIntegrity(temporaryPath);
+            safetyBackup = File.Exists(_databasePath)
+                ? CreateBackup("before-restore")
+                : null;
+            SqliteConnection.ClearAllPools();
+            File.Copy(temporaryPath, _databasePath, true);
+            Initialize();
+            VerifyIntegrity(_databasePath);
+        }
+        catch
+        {
+            if (safetyBackup is not null)
+                File.Copy(safetyBackup, _databasePath, true);
+            throw;
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    public void VerifyIntegrity() => VerifyIntegrity(_databasePath);
+
+    private void ApplyMigrations()
+    {
         using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS Recipes (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,15 +177,21 @@ public sealed class DatabaseService
             );
             """;
         command.ExecuteNonQuery();
-        EnsureColumn(connection, "Recipes", "SourceUrl", "TEXT NOT NULL DEFAULT ''");
-        EnsureColumn(connection, "Recipes", "ImageData", "BLOB NULL");
-        EnsureColumn(connection, "Recipes", "CookingTimeMinutes", "INTEGER NOT NULL DEFAULT 0");
-        EnsureColumn(connection, "Recipes", "Servings", "INTEGER NOT NULL DEFAULT 4");
-        EnsureColumn(connection, "Ingredients", "Quantity", "REAL NULL");
-        EnsureColumn(connection, "Ingredients", "Unit", "TEXT NOT NULL DEFAULT ''");
-        EnsureColumn(connection, "IngredientLibrary", "Season", "TEXT NOT NULL DEFAULT ''");
-        EnsureColumn(connection, "IngredientLibrary", "PluralName", "TEXT NOT NULL DEFAULT ''");
-        SeedIngredientLibrary(connection);
+        EnsureColumn(connection, transaction, "Recipes", "SourceUrl", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "Recipes", "ImageData", "BLOB NULL");
+        EnsureColumn(connection, transaction, "Recipes", "CookingTimeMinutes", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, transaction, "Recipes", "Servings", "INTEGER NOT NULL DEFAULT 4");
+        EnsureColumn(connection, transaction, "Ingredients", "Quantity", "REAL NULL");
+        EnsureColumn(connection, transaction, "Ingredients", "Unit", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "IngredientLibrary", "Season", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "IngredientLibrary", "PluralName", "TEXT NOT NULL DEFAULT ''");
+        SeedIngredientLibrary(connection, transaction);
+
+        using var versionCommand = connection.CreateCommand();
+        versionCommand.Transaction = transaction;
+        versionCommand.CommandText = $"PRAGMA user_version={CurrentSchemaVersion}";
+        versionCommand.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     public List<Recipe> GetRecipes()
@@ -325,9 +436,48 @@ public sealed class DatabaseService
         return connection;
     }
 
-    private static void SeedIngredientLibrary(SqliteConnection connection)
+    private int GetSchemaVersion()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static void VerifyIntegrity(string databasePath)
+    {
+        if (!File.Exists(databasePath))
+            throw new FileNotFoundException("The recipe database could not be found.", databasePath);
+
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            ForeignKeys = true,
+            Pooling = false
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA quick_check";
+        var result = Convert.ToString(command.ExecuteScalar());
+        if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"The recipe database failed its integrity check: {result}");
+    }
+
+    private void PruneBackups()
+    {
+        if (!Directory.Exists(_backupsFolder)) return;
+        foreach (var oldBackup in new DirectoryInfo(_backupsFolder)
+                     .GetFiles("recipes-*.db")
+                     .OrderByDescending(file => file.CreationTimeUtc)
+                     .Skip(BackupRetentionCount))
+            oldBackup.Delete();
+    }
+
+    private static void SeedIngredientLibrary(SqliteConnection connection, SqliteTransaction transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             INSERT OR IGNORE INTO IngredientLibrary (Name)
             SELECT DISTINCT TRIM(Name)
@@ -402,9 +552,10 @@ public sealed class DatabaseService
         command.Parameters.AddWithValue("$servings", Math.Max(1, recipe.Servings));
     }
 
-    private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string definition)
+    private static void EnsureColumn(SqliteConnection connection, SqliteTransaction transaction, string tableName, string columnName, string definition)
     {
         using var check = connection.CreateCommand();
+        check.Transaction = transaction;
         check.CommandText = $"PRAGMA table_info({tableName})";
         using var reader = check.ExecuteReader();
         while (reader.Read())
@@ -413,6 +564,7 @@ public sealed class DatabaseService
         }
         reader.Close();
         using var alter = connection.CreateCommand();
+        alter.Transaction = transaction;
         alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition}";
         alter.ExecuteNonQuery();
     }
