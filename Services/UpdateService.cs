@@ -18,7 +18,9 @@ public sealed record UpdateCheckResult(
 
 public sealed class UpdateService
 {
-    public string CurrentVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.0";
+    private const string DefaultRepository = "sanhai92/RecipeManager";
+
+    public string CurrentVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.1";
 
     public async Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken = default)
     {
@@ -105,7 +107,14 @@ public sealed class UpdateService
         return destination;
     }
 
-    private static string GetRepository() => Assembly.GetEntryAssembly()?
-        .GetCustomAttributes<AssemblyMetadataAttribute>()
-        .FirstOrDefault(x => x.Key == "UpdateRepository")?.Value ?? string.Empty;
+    private static string GetRepository()
+    {
+        var configuredRepository = Assembly.GetEntryAssembly()?
+            .GetCustomAttributes<AssemblyMetadataAttribute>()
+            .FirstOrDefault(x => x.Key == "UpdateRepository")?.Value;
+
+        return string.IsNullOrWhiteSpace(configuredRepository)
+            ? DefaultRepository
+            : configuredRepository;
+    }
 }

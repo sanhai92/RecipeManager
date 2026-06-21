@@ -1,10 +1,10 @@
 param(
     [Parameter(Mandatory = $false)]
     [ValidatePattern('^\d+\.\d+\.\d+$')]
-    [string]$Version = '1.0.0',
+    [string]$Version = '1.0.1',
 
     [Parameter(Mandatory = $false)]
-    [string]$Repository = ''
+    [string]$Repository = 'sanhai92/RecipeManager'
 )
 
 $ErrorActionPreference = 'Stop'
