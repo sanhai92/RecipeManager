@@ -22,6 +22,7 @@
                     <TextBlock Text="Cook something good with what you have" Foreground="{StaticResource LemonBrush}"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Content="Import code" Click="ImportRecipeCode_Click" Background="{StaticResource MintStrongBrush}" Foreground="{StaticResource DarkTextBrush}"/>
                     <Button Content="Manage ingredients" Click="ManageIngredients_Click" Background="{StaticResource MintStrongBrush}" Foreground="{StaticResource DarkTextBrush}"/>
                     <Button Content="＋ Add recipe" Click="Add_Click" Background="{StaticResource LemonBrush}" Foreground="{StaticResource DarkTextBrush}"/>
                     <Button x:Name="EditButton" Content="Edit" Click="Edit_Click" Background="{StaticResource MintStrongBrush}" Foreground="{StaticResource DarkTextBrush}" IsEnabled="False"/>
@@ -69,7 +70,12 @@
                         </StackPanel>
                     </StackPanel>
                 </Border>
-                <TextBlock x:Name="ListHeading" Grid.Row="1" Text="All recipes" FontSize="17" FontWeight="Bold" Margin="2,0,0,9" Foreground="{StaticResource DarkTextBrush}"/>
+                <StackPanel Grid.Row="1" Margin="0,0,0,9">
+                    <TextBlock Text="Find by recipe name" FontWeight="SemiBold" Foreground="{StaticResource HeaderBrush}" Margin="2,0,0,5"/>
+                    <TextBox x:Name="RecipeNameSearchBox" TextChanged="RecipeNameSearchBox_TextChanged"
+                             ToolTip="Type part of a recipe name; small spelling mistakes are allowed" Margin="0,0,0,9"/>
+                    <TextBlock x:Name="ListHeading" Text="All recipes" FontSize="17" FontWeight="Bold" Margin="2,0,0,0" Foreground="{StaticResource DarkTextBrush}"/>
+                </StackPanel>
                 <ListBox x:Name="RecipesList" Grid.Row="2" SelectionChanged="RecipesList_SelectionChanged"
                          BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                     <ListBox.ItemTemplate>
@@ -80,13 +86,9 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" TextTrimming="CharacterEllipsis" Foreground="{StaticResource DarkTextBrush}"/>
-                                        <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
-                                            <TextBlock Text="◷" Foreground="{StaticResource PrimaryBrush}" FontSize="14" Margin="0,0,5,0"/>
-                                            <TextBlock Text="{Binding CookingTimeDisplay}" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center"/>
-                                        </StackPanel>
-                                    </StackPanel>
+                                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15"
+                                               TextTrimming="CharacterEllipsis" Foreground="{StaticResource DarkTextBrush}"
+                                               VerticalAlignment="Center"/>
                                     <Button Grid.Column="1" Content="{Binding FavoriteGlyph}" Click="FavoriteFromList_Click"
                                             Background="Transparent" Foreground="#E0A500" FontSize="22"
                                             Padding="5,0" Margin="8,0,0,0" ToolTip="Toggle favorite"/>
@@ -125,6 +127,7 @@
                                         FontSize="28" Padding="8,1" Margin="12,0,0,0" ToolTip="Toggle favorite"/>
                             </Grid>
                             <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                                <Button Content="Share recipe code" Click="ShareRecipeCode_Click" Background="{StaticResource LemonBrush}" Foreground="{StaticResource DarkTextBrush}"/>
                                 <Button Content="Copy missing ingredients" Click="CopyMissingIngredients_Click"/>
                                 <Button x:Name="OpenUrlButton" Content="Open recipe website ↗" Click="OpenUrl_Click"
                                         Visibility="Collapsed"/>
@@ -153,6 +156,12 @@
             <Grid>
                 <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}"/>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="Back up recipes" Click="BackupRecipes_Click" ToolTip="Create a safe copy of all recipes and pictures"
+                            Background="Transparent" Foreground="{StaticResource PrimaryBrush}" Padding="4,1" Margin="0,0,12,0" FontSize="12"/>
+                    <Button Content="Restore backup" Click="RestoreRecipes_Click" ToolTip="Restore recipes from a previous backup"
+                            Background="Transparent" Foreground="{StaticResource PrimaryBrush}" Padding="4,1" Margin="0,0,14,0" FontSize="12"/>
+                    <Button Content="What's new" Click="WhatsNew_Click" ToolTip="See changes in this version"
+                            Background="Transparent" Foreground="{StaticResource MutedBrush}" Padding="4,1" Margin="0,0,14,0" FontSize="12"/>
                     <TextBlock x:Name="VersionText" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0"/>
                     <TextBlock x:Name="CurrentSeasonText" Foreground="{StaticResource MutedBrush}"
                                FontSize="12" VerticalAlignment="Center" Margin="0,0,14,0"
@@ -161,6 +170,13 @@
                             Background="Transparent" Foreground="{StaticResource PrimaryBrush}" Padding="4,1" Margin="0" FontSize="12"/>
                 </StackPanel>
             </Grid>
+        </Border>
+
+        <Border x:Name="CopyToast" Grid.RowSpan="3" Panel.ZIndex="20"
+                HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="24"
+                Background="{StaticResource HeaderBrush}" CornerRadius="8" Padding="16,10"
+                Visibility="Collapsed">
+            <TextBlock x:Name="CopyToastText" Foreground="White" FontWeight="SemiBold" FontSize="13"/>
         </Border>
     </Grid>
 </Window>

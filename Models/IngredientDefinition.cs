@@ -6,6 +6,8 @@ public sealed class IngredientDefinition
     public string Name { get; set; } = string.Empty;
     public string PluralName { get; set; } = string.Empty;
     public string Season { get; set; } = string.Empty;
-    public string DisplayName => string.IsNullOrWhiteSpace(Season) ? Name : $"{Name}  ·  {Season}";
+    public string Category { get; set; } = string.Empty;
+    public string DisplayName => string.Join("  ·  ", new[] { Name, Category, Season }
+        .Where(value => !string.IsNullOrWhiteSpace(value)));
     public override string ToString() => Name;
 }

@@ -34,7 +34,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Border" Property="Background" Value="{StaticResource PrimaryHoverBrush}"/>
+                                <Setter TargetName="Border" Property="Opacity" Value="0.82"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Border" Property="Opacity" Value="0.45"/>

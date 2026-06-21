@@ -6,6 +6,10 @@ namespace RecipeManager.Data;
 
 public sealed class DatabaseService
 {
+    private const int CurrentSchemaVersion = 2;
+    private const int BackupRetentionCount = 5;
+    private readonly string _databasePath;
+    private readonly string _backupsFolder;
     private readonly string _connectionString;
 
     public DatabaseService()
@@ -14,17 +18,120 @@ public sealed class DatabaseService
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "RecipeManager");
         Directory.CreateDirectory(appFolder);
+        _databasePath = Path.Combine(appFolder, "recipes.db");
+        _backupsFolder = Path.Combine(appFolder, "Backups");
         _connectionString = new SqliteConnectionStringBuilder
         {
-            DataSource = Path.Combine(appFolder, "recipes.db"),
-            ForeignKeys = true
+            DataSource = _databasePath,
+            ForeignKeys = true,
+            Pooling = false
         }.ToString();
     }
 
+    public string BackupsFolder => _backupsFolder;
+
     public void Initialize()
     {
+        string? migrationBackup = null;
+        var previousSchemaVersion = 0;
+        if (File.Exists(_databasePath) && new FileInfo(_databasePath).Length > 0)
+        {
+            VerifyIntegrity(_databasePath);
+            previousSchemaVersion = GetSchemaVersion();
+            if (previousSchemaVersion < CurrentSchemaVersion)
+                migrationBackup = CreateBackup("before-schema-update");
+        }
+
+        try
+        {
+            ApplyMigrations(previousSchemaVersion < 1);
+        }
+        catch (Exception migrationError)
+        {
+            if (migrationBackup is not null)
+            {
+                File.Copy(migrationBackup, _databasePath, true);
+                throw new InvalidOperationException(
+                    "The database update failed. Your recipes were restored from the automatic backup.",
+                    migrationError);
+            }
+
+            throw;
+        }
+    }
+
+    public string CreateBackup(string purpose = "manual")
+    {
+        if (!File.Exists(_databasePath))
+            throw new InvalidOperationException("There is no recipe database to back up yet.");
+
+        VerifyIntegrity(_databasePath);
+        Directory.CreateDirectory(_backupsFolder);
+        var safePurpose = string.Concat(purpose.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_'));
+        if (string.IsNullOrWhiteSpace(safePurpose)) safePurpose = "backup";
+        var backupPath = Path.Combine(
+            _backupsFolder,
+            $"recipes-{DateTime.Now:yyyyMMdd-HHmmss}-{safePurpose}.db");
+
+        using (var source = OpenConnection())
+        using (var destination = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = backupPath,
+            ForeignKeys = true,
+            Pooling = false
+        }.ToString()))
+        {
+            destination.Open();
+            source.BackupDatabase(destination);
+        }
+
+        VerifyIntegrity(backupPath);
+        PruneBackups();
+        return backupPath;
+    }
+
+    public void RestoreBackup(string backupPath)
+    {
+        if (string.IsNullOrWhiteSpace(backupPath) || !File.Exists(backupPath))
+            throw new FileNotFoundException("The selected recipe backup could not be found.", backupPath);
+
+        VerifyIntegrity(backupPath);
+        var temporaryPath = _databasePath + ".restore";
+        string? safetyBackup = null;
+
+        try
+        {
+            File.Copy(backupPath, temporaryPath, true);
+            VerifyIntegrity(temporaryPath);
+            safetyBackup = File.Exists(_databasePath)
+                ? CreateBackup("before-restore")
+                : null;
+            SqliteConnection.ClearAllPools();
+            File.Copy(temporaryPath, _databasePath, true);
+            Initialize();
+            VerifyIntegrity(_databasePath);
+        }
+        catch
+        {
+            if (safetyBackup is not null)
+                File.Copy(safetyBackup, _databasePath, true);
+            throw;
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    public void VerifyIntegrity() => VerifyIntegrity(_databasePath);
+
+    private void ApplyMigrations(bool seedExistingIngredients)
+    {
         using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             CREATE TABLE IF NOT EXISTS Recipes (
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -68,19 +175,28 @@ public sealed class DatabaseService
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Name TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 PluralName TEXT NOT NULL DEFAULT '',
-                Season TEXT NOT NULL DEFAULT ''
+                Season TEXT NOT NULL DEFAULT '',
+                Category TEXT NOT NULL DEFAULT ''
             );
             """;
         command.ExecuteNonQuery();
-        EnsureColumn(connection, "Recipes", "SourceUrl", "TEXT NOT NULL DEFAULT ''");
-        EnsureColumn(connection, "Recipes", "ImageData", "BLOB NULL");
-        EnsureColumn(connection, "Recipes", "CookingTimeMinutes", "INTEGER NOT NULL DEFAULT 0");
-        EnsureColumn(connection, "Recipes", "Servings", "INTEGER NOT NULL DEFAULT 4");
-        EnsureColumn(connection, "Ingredients", "Quantity", "REAL NULL");
-        EnsureColumn(connection, "Ingredients", "Unit", "TEXT NOT NULL DEFAULT ''");
-        EnsureColumn(connection, "IngredientLibrary", "Season", "TEXT NOT NULL DEFAULT ''");
-        EnsureColumn(connection, "IngredientLibrary", "PluralName", "TEXT NOT NULL DEFAULT ''");
-        SeedIngredientLibrary(connection);
+        EnsureColumn(connection, transaction, "Recipes", "SourceUrl", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "Recipes", "ImageData", "BLOB NULL");
+        EnsureColumn(connection, transaction, "Recipes", "CookingTimeMinutes", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, transaction, "Recipes", "Servings", "INTEGER NOT NULL DEFAULT 4");
+        EnsureColumn(connection, transaction, "Ingredients", "Quantity", "REAL NULL");
+        EnsureColumn(connection, transaction, "Ingredients", "Unit", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "IngredientLibrary", "Season", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "IngredientLibrary", "PluralName", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "IngredientLibrary", "Category", "TEXT NOT NULL DEFAULT ''");
+        if (seedExistingIngredients)
+            SeedIngredientLibrary(connection, transaction);
+
+        using var versionCommand = connection.CreateCommand();
+        versionCommand.Transaction = transaction;
+        versionCommand.CommandText = $"PRAGMA user_version={CurrentSchemaVersion}";
+        versionCommand.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     public List<Recipe> GetRecipes()
@@ -122,7 +238,7 @@ public sealed class DatabaseService
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, Name, PluralName, Season FROM IngredientLibrary ORDER BY Name COLLATE NOCASE";
+        command.CommandText = "SELECT Id, Name, PluralName, Season, Category FROM IngredientLibrary ORDER BY Name COLLATE NOCASE";
         using var reader = command.ExecuteReader();
         var ingredients = new List<IngredientDefinition>();
         while (reader.Read())
@@ -132,22 +248,24 @@ public sealed class DatabaseService
                 Id = reader.GetInt64(0),
                 Name = reader.GetString(1),
                 PluralName = reader.GetString(2),
-                Season = reader.GetString(3)
+                Season = reader.GetString(3),
+                Category = reader.GetString(4)
             });
         }
         return ingredients;
     }
 
-    public void AddIngredient(string name, string pluralName, string season)
+    public void AddIngredient(string name, string pluralName, string season, string category)
     {
         name = name.Trim();
         if (name.Length == 0) throw new ArgumentException("Enter an ingredient name.");
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO IngredientLibrary (Name, PluralName, Season) VALUES ($name, $pluralName, $season)";
+        command.CommandText = "INSERT INTO IngredientLibrary (Name, PluralName, Season, Category) VALUES ($name, $pluralName, $season, $category)";
         command.Parameters.AddWithValue("$name", name);
         command.Parameters.AddWithValue("$pluralName", pluralName.Trim());
         command.Parameters.AddWithValue("$season", season.Trim());
+        command.Parameters.AddWithValue("$category", category.Trim());
         try { command.ExecuteNonQuery(); }
         catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
         {
@@ -155,7 +273,7 @@ public sealed class DatabaseService
         }
     }
 
-    public void RenameIngredient(long id, string newName, string pluralName, string season)
+    public void RenameIngredient(long id, string newName, string pluralName, string season, string category)
     {
         newName = newName.Trim();
         if (newName.Length == 0) throw new ArgumentException("Enter an ingredient name.");
@@ -175,10 +293,11 @@ public sealed class DatabaseService
         {
             using var updateLibrary = connection.CreateCommand();
             updateLibrary.Transaction = transaction;
-            updateLibrary.CommandText = "UPDATE IngredientLibrary SET Name=$newName, PluralName=$pluralName, Season=$season WHERE Id=$id";
+            updateLibrary.CommandText = "UPDATE IngredientLibrary SET Name=$newName, PluralName=$pluralName, Season=$season, Category=$category WHERE Id=$id";
             updateLibrary.Parameters.AddWithValue("$newName", newName);
             updateLibrary.Parameters.AddWithValue("$pluralName", pluralName.Trim());
             updateLibrary.Parameters.AddWithValue("$season", season.Trim());
+            updateLibrary.Parameters.AddWithValue("$category", category.Trim());
             updateLibrary.Parameters.AddWithValue("$id", id);
             updateLibrary.ExecuteNonQuery();
 
@@ -232,21 +351,30 @@ public sealed class DatabaseService
         using (var connection = OpenConnection())
         using (var check = connection.CreateCommand())
         {
-            check.CommandText = "SELECT COUNT(*) FROM AppMetadata WHERE Key='SampleRecipesV1'";
+            check.CommandText = "SELECT COUNT(*) FROM AppMetadata WHERE Key='VeganSampleRecipesV2'";
             if (Convert.ToInt32(check.ExecuteScalar()) > 0) return 0;
+
+            check.CommandText = "SELECT COUNT(*) FROM Recipes";
+            if (Convert.ToInt32(check.ExecuteScalar()) > 0)
+            {
+                check.CommandText = "INSERT OR REPLACE INTO AppMetadata (Key, Value) VALUES ('VeganSampleRecipesV2', $value)";
+                check.Parameters.AddWithValue("$value", DateTime.UtcNow.ToString("O"));
+                check.ExecuteNonQuery();
+                return 0;
+            }
         }
 
         var existingTitles = GetRecipes().Select(x => x.Title).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var added = 0;
         foreach (var recipe in SampleRecipes.Create().Where(x => !existingTitles.Contains(x.Title)))
         {
-            Save(recipe);
+            Save(recipe, SampleRecipes.DefinitionsFor(recipe));
             added++;
         }
 
         using var markerConnection = OpenConnection();
         using var marker = markerConnection.CreateCommand();
-        marker.CommandText = "INSERT OR REPLACE INTO AppMetadata (Key, Value) VALUES ('SampleRecipesV1', $value)";
+        marker.CommandText = "INSERT OR REPLACE INTO AppMetadata (Key, Value) VALUES ('VeganSampleRecipesV2', $value)";
         marker.Parameters.AddWithValue("$value", DateTime.UtcNow.ToString("O"));
         marker.ExecuteNonQuery();
         return added;
@@ -268,10 +396,13 @@ public sealed class DatabaseService
         transaction.Commit();
     }
 
-    public long Save(Recipe recipe)
+    public long Save(Recipe recipe, IEnumerable<IngredientDefinition>? ingredientsToAddToLibrary = null)
     {
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
+        var libraryAdditions = (ingredientsToAddToLibrary ?? [])
+            .GroupBy(ingredient => ingredient.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
 
         if (recipe.Id == 0)
         {
@@ -293,7 +424,7 @@ public sealed class DatabaseService
             DeleteChildren(connection, transaction, recipe.Id);
         }
 
-        InsertIngredients(connection, transaction, recipe.Id, recipe.Ingredients);
+        InsertIngredients(connection, transaction, recipe.Id, recipe.Ingredients, libraryAdditions);
         InsertChildren(connection, transaction, "Tools", recipe.Id, recipe.Tools);
         transaction.Commit();
         return recipe.Id;
@@ -325,9 +456,48 @@ public sealed class DatabaseService
         return connection;
     }
 
-    private static void SeedIngredientLibrary(SqliteConnection connection)
+    private int GetSchemaVersion()
+    {
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA user_version";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static void VerifyIntegrity(string databasePath)
+    {
+        if (!File.Exists(databasePath))
+            throw new FileNotFoundException("The recipe database could not be found.", databasePath);
+
+        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = databasePath,
+            Mode = SqliteOpenMode.ReadOnly,
+            ForeignKeys = true,
+            Pooling = false
+        }.ToString());
+        connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA quick_check";
+        var result = Convert.ToString(command.ExecuteScalar());
+        if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"The recipe database failed its integrity check: {result}");
+    }
+
+    private void PruneBackups()
+    {
+        if (!Directory.Exists(_backupsFolder)) return;
+        foreach (var oldBackup in new DirectoryInfo(_backupsFolder)
+                     .GetFiles("recipes-*.db")
+                     .OrderByDescending(file => file.CreationTimeUtc)
+                     .Skip(BackupRetentionCount))
+            oldBackup.Delete();
+    }
+
+    private static void SeedIngredientLibrary(SqliteConnection connection, SqliteTransaction transaction)
     {
         using var command = connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = """
             INSERT OR IGNORE INTO IngredientLibrary (Name)
             SELECT DISTINCT TRIM(Name)
@@ -367,7 +537,8 @@ public sealed class DatabaseService
         return items;
     }
 
-    private static void InsertIngredients(SqliteConnection connection, SqliteTransaction transaction, long recipeId, IEnumerable<RecipeIngredient> items)
+    private static void InsertIngredients(SqliteConnection connection, SqliteTransaction transaction, long recipeId,
+        IEnumerable<RecipeIngredient> items, IReadOnlyDictionary<string, IngredientDefinition> ingredientsToAddToLibrary)
     {
         var index = 0;
         foreach (var item in items.Where(x => !string.IsNullOrWhiteSpace(x.Name)))
@@ -382,11 +553,17 @@ public sealed class DatabaseService
             command.Parameters.AddWithValue("$sortOrder", index++);
             command.ExecuteNonQuery();
 
-            using var libraryCommand = connection.CreateCommand();
-            libraryCommand.Transaction = transaction;
-            libraryCommand.CommandText = "INSERT OR IGNORE INTO IngredientLibrary (Name) VALUES ($name)";
-            libraryCommand.Parameters.AddWithValue("$name", item.Name.Trim());
-            libraryCommand.ExecuteNonQuery();
+            if (ingredientsToAddToLibrary.TryGetValue(item.Name.Trim(), out var libraryIngredient))
+            {
+                using var libraryCommand = connection.CreateCommand();
+                libraryCommand.Transaction = transaction;
+                libraryCommand.CommandText = "INSERT OR IGNORE INTO IngredientLibrary (Name, PluralName, Season, Category) VALUES ($name, $pluralName, $season, $category)";
+                libraryCommand.Parameters.AddWithValue("$name", item.Name.Trim());
+                libraryCommand.Parameters.AddWithValue("$pluralName", libraryIngredient.PluralName.Trim());
+                libraryCommand.Parameters.AddWithValue("$season", libraryIngredient.Season.Trim());
+                libraryCommand.Parameters.AddWithValue("$category", libraryIngredient.Category.Trim());
+                libraryCommand.ExecuteNonQuery();
+            }
         }
     }
 
@@ -402,9 +579,10 @@ public sealed class DatabaseService
         command.Parameters.AddWithValue("$servings", Math.Max(1, recipe.Servings));
     }
 
-    private static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string definition)
+    private static void EnsureColumn(SqliteConnection connection, SqliteTransaction transaction, string tableName, string columnName, string definition)
     {
         using var check = connection.CreateCommand();
+        check.Transaction = transaction;
         check.CommandText = $"PRAGMA table_info({tableName})";
         using var reader = check.ExecuteReader();
         while (reader.Read())
@@ -413,6 +591,7 @@ public sealed class DatabaseService
         }
         reader.Close();
         using var alter = connection.CreateCommand();
+        alter.Transaction = transaction;
         alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition}";
         alter.ExecuteNonQuery();
     }

@@ -20,7 +20,7 @@ public sealed class UpdateService
 {
     private const string DefaultRepository = "sanhai92/RecipeManager";
 
-    public string CurrentVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.1";
+    public string CurrentVersion => Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "1.0.3";
 
     public async Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken = default)
     {

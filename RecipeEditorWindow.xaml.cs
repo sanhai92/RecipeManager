@@ -3,6 +3,7 @@ using System.IO;
 using System.Globalization;
 using Microsoft.Win32;
 using RecipeManager.Models;
+using RecipeManager.Services;
 
 namespace RecipeManager;
 
@@ -39,13 +40,29 @@ public partial class RecipeEditorWindow : Window
         var selectedIngredients = Recipe.Ingredients
             .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
-        _ingredientChoices = ingredientLibrary
+        var ingredientDefinitions = ingredientLibrary.ToList();
+        var libraryNames = ingredientDefinitions.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var externalIngredientNames = Recipe.Ingredients
+            .Select(item => item.Name)
+            .Where(name => !libraryNames.Contains(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        var availableIngredients = ingredientDefinitions
+            .Concat(Recipe.Ingredients
+                .Where(item => !ingredientDefinitions.Any(definition => definition.Name.Equals(item.Name, StringComparison.OrdinalIgnoreCase)))
+                .Select(item => new IngredientDefinition { Name = item.Name }))
+            .GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First());
+        _ingredientChoices = availableIngredients
             .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
             .Select(x => new IngredientChoice
             {
                 Name = x.Name,
                 PluralName = x.PluralName,
                 Season = x.Season,
+                Category = x.Category,
+                IsInLibrary = libraryNames.Contains(x.Name),
                 IsSelected = selectedIngredients.ContainsKey(x.Name),
                 QuantityText = selectedIngredients.TryGetValue(x.Name, out var existing) && existing.Quantity.HasValue
                     ? existing.Quantity.Value.ToString("0.##", CultureInfo.CurrentCulture)
@@ -53,6 +70,13 @@ public partial class RecipeEditorWindow : Window
                 Unit = selectedIngredients.TryGetValue(x.Name, out existing) ? existing.Unit : string.Empty
             })
             .ToList();
+
+        if (externalIngredientNames.Count > 0)
+        {
+            ExternalIngredientsNotice.Text =
+                $"New ingredients for this recipe: {string.Join(", ", externalIngredientNames)}.";
+            ExternalIngredientsNotice.Visibility = Visibility.Visible;
+        }
 
         Title = recipe is null ? "Add recipe" : "Edit recipe";
         TitleBox.Text = Recipe.Title;
@@ -154,7 +178,7 @@ public partial class RecipeEditorWindow : Window
     {
         var search = IngredientSearchBox?.Text.Trim() ?? string.Empty;
         IngredientChoicesList.ItemsSource = _ingredientChoices
-            .Where(x => search.Length == 0 || x.Name.Contains(search, StringComparison.CurrentCultureIgnoreCase))
+            .Where(x => search.Length == 0 || BilingualSearchService.IsLooseMatch($"{x.Name} {x.PluralName} {x.Category}", search))
             .ToList();
     }
 

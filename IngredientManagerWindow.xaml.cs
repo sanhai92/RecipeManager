@@ -15,6 +15,12 @@ public partial class IngredientManagerWindow : Window
         _database = database;
         SeasonBox.ItemsSource = new[] { "No season", "Spring", "Summer", "Autumn", "Winter" };
         SeasonBox.SelectedIndex = 0;
+        CategoryBox.ItemsSource = new[]
+        {
+            "No category", "Fruit", "Vegetable", "Meat", "Fish & Seafood", "Dairy", "Dairy Alternative",
+            "Grain & Pasta", "Legume", "Herb & Spice", "Condiment & Sauce", "Baking", "Other"
+        };
+        CategoryBox.SelectedIndex = 0;
         Reload();
     }
 
@@ -31,10 +37,11 @@ public partial class IngredientManagerWindow : Window
     {
         try
         {
-            _database.AddIngredient(NameBox.Text, PluralNameBox.Text, SelectedSeason());
+            _database.AddIngredient(NameBox.Text, PluralNameBox.Text, SelectedSeason(), SelectedCategory());
             NameBox.Clear();
             PluralNameBox.Clear();
             SeasonBox.SelectedIndex = 0;
+            CategoryBox.SelectedIndex = 0;
             Reload();
         }
         catch (Exception ex)
@@ -52,7 +59,7 @@ public partial class IngredientManagerWindow : Window
         }
         try
         {
-            _database.RenameIngredient(selected.Id, NameBox.Text, PluralNameBox.Text, SelectedSeason());
+            _database.RenameIngredient(selected.Id, NameBox.Text, PluralNameBox.Text, SelectedSeason(), SelectedCategory());
             Reload(selected.Id);
         }
         catch (Exception ex)
@@ -80,6 +87,7 @@ public partial class IngredientManagerWindow : Window
         NameBox.Clear();
         PluralNameBox.Clear();
         SeasonBox.SelectedIndex = 0;
+        CategoryBox.SelectedIndex = 0;
         Reload();
     }
 
@@ -89,9 +97,11 @@ public partial class IngredientManagerWindow : Window
         NameBox.Text = selected.Name;
         PluralNameBox.Text = selected.PluralName;
         SeasonBox.SelectedItem = string.IsNullOrWhiteSpace(selected.Season) ? "No season" : selected.Season;
+        CategoryBox.SelectedItem = string.IsNullOrWhiteSpace(selected.Category) ? "No category" : selected.Category;
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
     private string SelectedSeason() => SeasonBox.SelectedIndex <= 0 ? string.Empty : SeasonBox.SelectedItem?.ToString() ?? string.Empty;
+    private string SelectedCategory() => CategoryBox.SelectedIndex <= 0 ? string.Empty : CategoryBox.SelectedItem?.ToString() ?? string.Empty;
 }

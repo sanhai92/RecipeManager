@@ -7,6 +7,7 @@ using System.Windows.Documents;
 using System.Diagnostics;
 using System.IO;
 using System.Globalization;
+using Microsoft.Win32;
 using RecipeManager.Data;
 using RecipeManager.Models;
 using RecipeManager.Services;
@@ -21,6 +22,7 @@ public partial class MainWindow : Window
     private readonly List<IngredientChoice> _pantryChoices = [];
     private List<Recipe> _allRecipes = [];
     private int _displayServings = 1;
+    private CancellationTokenSource? _copyToastCancellation;
 
     public MainWindow()
     {
@@ -58,7 +60,11 @@ public partial class MainWindow : Window
     {
         var selectedId = SelectedRecipe?.Id ?? 0;
         var pantry = GetSelectedPantryIngredients();
+        var nameSearch = RecipeNameSearchBox?.Text.Trim() ?? string.Empty;
         IEnumerable<Recipe> filtered = _allRecipes;
+
+        if (nameSearch.Length > 0)
+            filtered = filtered.Where(recipe => BilingualSearchService.IsLooseMatch(recipe.Title, nameSearch));
 
         if (pantry.Count > 0)
         {
@@ -83,7 +89,9 @@ public partial class MainWindow : Window
         _visibleRecipes.Clear();
         foreach (var recipe in results) _visibleRecipes.Add(recipe);
 
-        ListHeading.Text = pantry.Count > 0 ? "Recipes with these ingredients" : "All recipes";
+        ListHeading.Text = nameSearch.Length > 0
+            ? "Matching recipes"
+            : pantry.Count > 0 ? "Recipes with these ingredients" : "All recipes";
         StatusText.Text = pantry.Count > 0
             ? $"{results.Count} recipe{(results.Count == 1 ? "" : "s")} contain all searched ingredients"
             : $"{results.Count} recipe{(results.Count == 1 ? "" : "s")}";
@@ -99,13 +107,15 @@ public partial class MainWindow : Window
 
     private static bool IngredientMatches(string required, string available)
     {
-        var normalizedRequired = NormalizeIngredient(required);
-        return normalizedRequired.Equals(available, StringComparison.OrdinalIgnoreCase)
-            || normalizedRequired.Contains(available, StringComparison.OrdinalIgnoreCase)
-            || available.Contains(normalizedRequired, StringComparison.OrdinalIgnoreCase);
+        return BilingualSearchService.AreEquivalent(required, available);
     }
 
     private static string NormalizeIngredient(string value) => value.Trim().ToLowerInvariant();
+
+    private void RecipeNameSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (IsLoaded) ApplyFilters();
+    }
 
     private void ShowDetails(Recipe? recipe)
     {
@@ -276,6 +286,7 @@ public partial class MainWindow : Window
                 Name = x.Name,
                 PluralName = x.PluralName,
                 Season = x.Season,
+                Category = x.Category,
                 IsSelected = selected.Contains(x.Name)
             }));
         RefreshPantryIngredientList();
@@ -285,7 +296,7 @@ public partial class MainWindow : Window
     {
         var search = PantryLibrarySearchBox?.Text.Trim() ?? string.Empty;
         PantryIngredientsList.ItemsSource = _pantryChoices
-            .Where(x => search.Length == 0 || x.Name.Contains(search, StringComparison.CurrentCultureIgnoreCase))
+            .Where(x => search.Length == 0 || BilingualSearchService.IsLooseMatch($"{x.Name} {x.PluralName} {x.Category}", search))
             .ToList();
     }
 
@@ -317,14 +328,112 @@ public partial class MainWindow : Window
         try
         {
             Clipboard.SetText(clipboardText);
-            StatusText.Text = missing.Count > 0
-                ? $"Copied {missing.Count} missing ingredient{(missing.Count == 1 ? "" : "s")} for {recipe.Title}"
-                : $"All ingredients for {recipe.Title} are already matched";
+            ShowCopyToast(missing.Count > 0
+                ? $"✓ {missing.Count} missing ingredient{(missing.Count == 1 ? "" : "s")} copied"
+                : "✓ Text copied");
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, $"The ingredients could not be copied.\n\n{ex.Message}", "Clipboard error", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void ShareRecipeCode_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedRecipe is not { } recipe) return;
+        try
+        {
+            var code = RecipeShareService.Encode(recipe, _database.GetIngredientLibrary());
+            Clipboard.SetText(code);
+            ShowCopyToast("✓ Recipe code copied");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"The recipe code could not be copied.\n\n{ex.Message}",
+                "Sharing failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async void ShowCopyToast(string message)
+    {
+        _copyToastCancellation?.Cancel();
+        _copyToastCancellation?.Dispose();
+        var cancellation = new CancellationTokenSource();
+        _copyToastCancellation = cancellation;
+        CopyToastText.Text = message;
+        CopyToast.Visibility = Visibility.Visible;
+
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2.4), cancellation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(_copyToastCancellation, cancellation))
+        {
+            CopyToast.Visibility = Visibility.Collapsed;
+            _copyToastCancellation = null;
+            cancellation.Dispose();
+        }
+    }
+
+    private void ImportRecipeCode_Click(object sender, RoutedEventArgs e)
+    {
+        var importWindow = new RecipeCodeImportWindow { Owner = this };
+        if (importWindow.ShowDialog() != true || importWindow.DecodedShare is not { } decodedShare) return;
+        var importedRecipe = decodedShare.Recipe;
+        var ingredientLibrary = _database.GetIngredientLibrary();
+
+        var preview = new SharedRecipePreviewWindow(
+            importedRecipe, ingredientLibrary, decodedShare.IngredientDefinitions) { Owner = this };
+        if (preview.ShowDialog() != true) return;
+
+        var editingLibrary = ingredientLibrary
+            .Concat(preview.IngredientsToAddToLibrary)
+            .GroupBy(ingredient => ingredient.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToList();
+        var editor = new RecipeEditorWindow(editingLibrary, importedRecipe) { Owner = this };
+        if (editor.ShowDialog() != true) return;
+        importedRecipe = editor.Recipe;
+
+        var existing = _allRecipes.FirstOrDefault(recipe =>
+            recipe.Title.Equals(importedRecipe.Title, StringComparison.OrdinalIgnoreCase));
+        if (existing is not null)
+        {
+            var choice = MessageBox.Show(this,
+                $"A recipe named ‘{existing.Title}’ already exists.\n\nChoose Yes to replace it, No to add the shared recipe as a copy, or Cancel to stop.",
+                "Recipe already exists", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
+            if (choice == MessageBoxResult.Cancel) return;
+            if (choice == MessageBoxResult.Yes)
+            {
+                importedRecipe.Id = existing.Id;
+                importedRecipe.IsFavorite = existing.IsFavorite;
+                importedRecipe.ImageData ??= existing.ImageData;
+            }
+            else
+            {
+                importedRecipe.Id = 0;
+                importedRecipe.Title = GetUniqueRecipeTitle(importedRecipe.Title);
+            }
+        }
+
+        var id = _database.Save(importedRecipe, preview.IngredientsToAddToLibrary);
+        LoadPantryChoices();
+        ReloadRecipes(id);
+        StatusText.Text = $"Imported {importedRecipe.Title}";
+    }
+
+    private string GetUniqueRecipeTitle(string baseTitle)
+    {
+        var candidate = $"{baseTitle} (shared)";
+        var number = 2;
+        while (_allRecipes.Any(recipe => recipe.Title.Equals(candidate, StringComparison.OrdinalIgnoreCase)))
+            candidate = $"{baseTitle} (shared {number++})";
+        return candidate;
     }
 
     private static BitmapImage LoadImage(byte[] imageData)
@@ -377,18 +486,37 @@ public partial class MainWindow : Window
         _ => "Winter"
     };
 
+    private void HighlightAvailableUpdate(UpdateCheckResult result)
+    {
+        UpdateButton.Content = $"↑ Update {result.LatestVersion} available";
+        UpdateButton.Tag = result.ReleaseUrl;
+        UpdateButton.ToolTip = "A newer version of Recipe Manager is ready to install";
+        UpdateButton.Background = (Brush)FindResource("LemonBrush");
+        UpdateButton.Foreground = (Brush)FindResource("DarkTextBrush");
+        UpdateButton.FontWeight = FontWeights.Bold;
+        UpdateButton.Padding = new Thickness(10, 4, 10, 4);
+    }
+
+    private void ResetUpdateButton()
+    {
+        UpdateButton.Content = "Check for updates";
+        UpdateButton.Tag = null;
+        UpdateButton.ToolTip = null;
+        UpdateButton.Background = Brushes.Transparent;
+        UpdateButton.Foreground = (Brush)FindResource("PrimaryBrush");
+        UpdateButton.FontWeight = FontWeights.SemiBold;
+        UpdateButton.Padding = new Thickness(4, 1, 4, 1);
+    }
+
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         Loaded -= MainWindow_Loaded;
+        var updateSummary = ReleaseNotesService.GetUpdateSummary(_updateService.CurrentVersion);
+        if (updateSummary is not null)
+            new WhatsNewWindow(updateSummary) { Owner = this }.ShowDialog();
         var result = await _updateService.CheckAsync();
         if (result.IsUpdateAvailable)
-        {
-            UpdateButton.Content = $"Update {result.LatestVersion} available";
-            UpdateButton.Tag = result.ReleaseUrl;
-            UpdateButton.Background = (System.Windows.Media.Brush)FindResource("LemonBrush");
-            UpdateButton.Foreground = (System.Windows.Media.Brush)FindResource("DarkTextBrush");
-            UpdateButton.Padding = new Thickness(8, 3, 8, 3);
-        }
+            HighlightAvailableUpdate(result);
     }
 
     private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
@@ -400,6 +528,7 @@ public partial class MainWindow : Window
 
         if (!result.IsConfigured)
         {
+            ResetUpdateButton();
             UpdateButton.Content = "Updates not configured";
             MessageBox.Show(this, "Update checks become active in builds published through the included GitHub release workflow.",
                 "Updates", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -407,20 +536,20 @@ public partial class MainWindow : Window
         }
         if (!string.IsNullOrWhiteSpace(result.Error))
         {
-            UpdateButton.Content = "Check for updates";
+            ResetUpdateButton();
             MessageBox.Show(this, $"The update check could not be completed.\n\n{result.Error}",
                 "Update check", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
         if (!result.IsUpdateAvailable)
         {
-            UpdateButton.Content = "Check for updates";
+            ResetUpdateButton();
             MessageBox.Show(this, $"Recipe Manager {result.CurrentVersion} is up to date.",
                 "No updates available", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        UpdateButton.Content = $"Update {result.LatestVersion} available";
+        HighlightAvailableUpdate(result);
         if (string.IsNullOrWhiteSpace(result.InstallerUrl))
         {
             var openPage = MessageBox.Show(this,
@@ -439,8 +568,11 @@ public partial class MainWindow : Window
         try
         {
             UpdateButton.IsEnabled = false;
+            UpdateButton.Content = "Backing up recipes…";
+            _database.CreateBackup($"before-update-{result.LatestVersion}");
             var progress = new Progress<double>(value => UpdateButton.Content = $"Downloading… {value:0}%");
             var installer = await _updateService.DownloadInstallerAsync(result, progress);
+            ReleaseNotesService.MarkPendingUpdate(result.CurrentVersion, result.LatestVersion ?? result.CurrentVersion);
             UpdateButton.Content = "Installing…";
             Process.Start(new ProcessStartInfo(installer)
             {
@@ -452,9 +584,69 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             UpdateButton.IsEnabled = true;
-            UpdateButton.Content = "Check for updates";
+            ResetUpdateButton();
             MessageBox.Show(this, $"The update could not be installed.\n\n{ex.Message}",
                 "Update failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
+    }
+
+    private void BackupRecipes_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var backupPath = _database.CreateBackup();
+            StatusText.Text = "Recipe backup created";
+            MessageBox.Show(this,
+                $"Your recipes and pictures were backed up successfully.\n\n{backupPath}\n\nThe five newest backups are kept automatically.",
+                "Backup complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"The backup could not be created.\n\n{ex.Message}",
+                "Backup failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void RestoreRecipes_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Restore recipe backup",
+            InitialDirectory = Directory.Exists(_database.BackupsFolder)
+                ? _database.BackupsFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Filter = "Recipe database backups (*.db)|*.db|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        var answer = MessageBox.Show(this,
+            "Restore this backup?\n\nYour current recipes will first be backed up automatically, then replaced by the selected copy.",
+            "Restore recipes", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (answer != MessageBoxResult.Yes) return;
+
+        try
+        {
+            _database.RestoreBackup(dialog.FileName);
+            LoadPantryChoices();
+            ReloadRecipes();
+            StatusText.Text = "Recipe backup restored";
+            MessageBox.Show(this, "Your recipes and pictures were restored successfully.",
+                "Restore complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                $"The backup could not be restored. Your previous database has been kept.\n\n{ex.Message}",
+                "Restore failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void WhatsNew_Click(object sender, RoutedEventArgs e)
+    {
+        var summary = ReleaseNotesService.GetCurrentVersionSummary(_updateService.CurrentVersion);
+        if (summary is not null)
+            new WhatsNewWindow(summary, showVersionComparison: false) { Owner = this }.ShowDialog();
     }
 }

@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "1.0.1"
+  #define MyAppVersion "1.0.3"
 #endif
 #ifndef MyAppPublisher
   #define MyAppPublisher "sande"
@@ -42,3 +42,23 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Open {#MyAppName}"; Flags: nowait
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  PreviousVersion: String;
+  UpdateFolder: String;
+  MarkerJson: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU,
+    'Software\Microsoft\Windows\CurrentVersion\Uninstall\{C2B340D8-8D1D-4D9C-94B7-78E68A98E127}_is1',
+    'DisplayVersion', PreviousVersion) and
+    (CompareText(PreviousVersion, '{#MyAppVersion}') <> 0) then
+  begin
+    UpdateFolder := ExpandConstant('{localappdata}\RecipeManager');
+    ForceDirectories(UpdateFolder);
+    MarkerJson := '{"FromVersion":"' + PreviousVersion + '","ToVersion":"{#MyAppVersion}"}';
+    SaveStringToFile(UpdateFolder + '\pending-update.json', MarkerJson, False);
+  end;
+end;
