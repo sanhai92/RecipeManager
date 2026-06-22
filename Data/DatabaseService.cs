@@ -6,7 +6,7 @@ namespace RecipeManager.Data;
 
 public sealed class DatabaseService
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 4;
     private const int BackupRetentionCount = 5;
     private readonly string _databasePath;
     private readonly string _backupsFolder;
@@ -163,8 +163,18 @@ public sealed class DatabaseService
                 FOREIGN KEY (RecipeId) REFERENCES Recipes(Id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS RecipeTags (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RecipeId INTEGER NOT NULL,
+                Name TEXT NOT NULL COLLATE NOCASE,
+                SortOrder INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (RecipeId) REFERENCES Recipes(Id) ON DELETE CASCADE,
+                UNIQUE (RecipeId, Name)
+            );
+
             CREATE INDEX IF NOT EXISTS IX_Ingredients_RecipeId ON Ingredients(RecipeId);
             CREATE INDEX IF NOT EXISTS IX_Tools_RecipeId ON Tools(RecipeId);
+            CREATE INDEX IF NOT EXISTS IX_RecipeTags_RecipeId ON RecipeTags(RecipeId);
 
             CREATE TABLE IF NOT EXISTS AppMetadata (
                 Key TEXT PRIMARY KEY,
@@ -175,6 +185,7 @@ public sealed class DatabaseService
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Name TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 PluralName TEXT NOT NULL DEFAULT '',
+                Aliases TEXT NOT NULL DEFAULT '',
                 Season TEXT NOT NULL DEFAULT '',
                 Category TEXT NOT NULL DEFAULT ''
             );
@@ -188,7 +199,9 @@ public sealed class DatabaseService
         EnsureColumn(connection, transaction, "Ingredients", "Unit", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, transaction, "IngredientLibrary", "Season", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, transaction, "IngredientLibrary", "PluralName", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "IngredientLibrary", "Aliases", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, transaction, "IngredientLibrary", "Category", "TEXT NOT NULL DEFAULT ''");
+        SeedRecommendedIngredientAliases(connection, transaction);
         if (seedExistingIngredients)
             SeedIngredientLibrary(connection, transaction);
 
@@ -227,397 +240,4 @@ public sealed class DatabaseService
 
         foreach (var recipe in recipes)
         {
-            recipe.Ingredients = GetIngredients(connection, recipe.Id);
-            recipe.Tools = GetChildItems(connection, "Tools", recipe.Id);
-        }
-
-        return recipes;
-    }
-
-    public List<IngredientDefinition> GetIngredientLibrary()
-    {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, Name, PluralName, Season, Category FROM IngredientLibrary ORDER BY Name COLLATE NOCASE";
-        using var reader = command.ExecuteReader();
-        var ingredients = new List<IngredientDefinition>();
-        while (reader.Read())
-        {
-            ingredients.Add(new IngredientDefinition
-            {
-                Id = reader.GetInt64(0),
-                Name = reader.GetString(1),
-                PluralName = reader.GetString(2),
-                Season = reader.GetString(3),
-                Category = reader.GetString(4)
-            });
-        }
-        return ingredients;
-    }
-
-    public void AddIngredient(string name, string pluralName, string season, string category)
-    {
-        name = name.Trim();
-        if (name.Length == 0) throw new ArgumentException("Enter an ingredient name.");
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO IngredientLibrary (Name, PluralName, Season, Category) VALUES ($name, $pluralName, $season, $category)";
-        command.Parameters.AddWithValue("$name", name);
-        command.Parameters.AddWithValue("$pluralName", pluralName.Trim());
-        command.Parameters.AddWithValue("$season", season.Trim());
-        command.Parameters.AddWithValue("$category", category.Trim());
-        try { command.ExecuteNonQuery(); }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
-        {
-            throw new InvalidOperationException("That ingredient already exists.", ex);
-        }
-    }
-
-    public void RenameIngredient(long id, string newName, string pluralName, string season, string category)
-    {
-        newName = newName.Trim();
-        if (newName.Length == 0) throw new ArgumentException("Enter an ingredient name.");
-        using var connection = OpenConnection();
-        using var transaction = connection.BeginTransaction();
-
-        string oldName;
-        using (var lookup = connection.CreateCommand())
-        {
-            lookup.Transaction = transaction;
-            lookup.CommandText = "SELECT Name FROM IngredientLibrary WHERE Id=$id";
-            lookup.Parameters.AddWithValue("$id", id);
-            oldName = lookup.ExecuteScalar() as string ?? throw new InvalidOperationException("The ingredient no longer exists.");
-        }
-
-        try
-        {
-            using var updateLibrary = connection.CreateCommand();
-            updateLibrary.Transaction = transaction;
-            updateLibrary.CommandText = "UPDATE IngredientLibrary SET Name=$newName, PluralName=$pluralName, Season=$season, Category=$category WHERE Id=$id";
-            updateLibrary.Parameters.AddWithValue("$newName", newName);
-            updateLibrary.Parameters.AddWithValue("$pluralName", pluralName.Trim());
-            updateLibrary.Parameters.AddWithValue("$season", season.Trim());
-            updateLibrary.Parameters.AddWithValue("$category", category.Trim());
-            updateLibrary.Parameters.AddWithValue("$id", id);
-            updateLibrary.ExecuteNonQuery();
-
-            using var updateRecipes = connection.CreateCommand();
-            updateRecipes.Transaction = transaction;
-            updateRecipes.CommandText = "UPDATE Ingredients SET Name=$newName WHERE Name=$oldName COLLATE NOCASE";
-            updateRecipes.Parameters.AddWithValue("$newName", newName);
-            updateRecipes.Parameters.AddWithValue("$oldName", oldName);
-            updateRecipes.ExecuteNonQuery();
-            transaction.Commit();
-        }
-        catch (SqliteException ex) when (ex.SqliteErrorCode == 19)
-        {
-            throw new InvalidOperationException("That ingredient name is already in the library.", ex);
-        }
-    }
-
-    public int DeleteIngredient(long id)
-    {
-        using var connection = OpenConnection();
-        using var transaction = connection.BeginTransaction();
-        string name;
-        using (var lookup = connection.CreateCommand())
-        {
-            lookup.Transaction = transaction;
-            lookup.CommandText = "SELECT Name FROM IngredientLibrary WHERE Id=$id";
-            lookup.Parameters.AddWithValue("$id", id);
-            name = lookup.ExecuteScalar() as string ?? string.Empty;
-        }
-
-        using (var usage = connection.CreateCommand())
-        {
-            usage.Transaction = transaction;
-            usage.CommandText = "SELECT COUNT(DISTINCT RecipeId) FROM Ingredients WHERE Name=$name COLLATE NOCASE";
-            usage.Parameters.AddWithValue("$name", name);
-            var count = Convert.ToInt32(usage.ExecuteScalar());
-            if (count > 0) return count;
-        }
-
-        using var delete = connection.CreateCommand();
-        delete.Transaction = transaction;
-        delete.CommandText = "DELETE FROM IngredientLibrary WHERE Id=$id";
-        delete.Parameters.AddWithValue("$id", id);
-        delete.ExecuteNonQuery();
-        transaction.Commit();
-        return 0;
-    }
-
-    public int SeedSampleRecipes()
-    {
-        using (var connection = OpenConnection())
-        using (var check = connection.CreateCommand())
-        {
-            check.CommandText = "SELECT COUNT(*) FROM AppMetadata WHERE Key='VeganSampleRecipesV2'";
-            if (Convert.ToInt32(check.ExecuteScalar()) > 0) return 0;
-
-            check.CommandText = "SELECT COUNT(*) FROM Recipes";
-            if (Convert.ToInt32(check.ExecuteScalar()) > 0)
-            {
-                check.CommandText = "INSERT OR REPLACE INTO AppMetadata (Key, Value) VALUES ('VeganSampleRecipesV2', $value)";
-                check.Parameters.AddWithValue("$value", DateTime.UtcNow.ToString("O"));
-                check.ExecuteNonQuery();
-                return 0;
-            }
-        }
-
-        var existingTitles = GetRecipes().Select(x => x.Title).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var added = 0;
-        foreach (var recipe in SampleRecipes.Create().Where(x => !existingTitles.Contains(x.Title)))
-        {
-            Save(recipe, SampleRecipes.DefinitionsFor(recipe));
-            added++;
-        }
-
-        using var markerConnection = OpenConnection();
-        using var marker = markerConnection.CreateCommand();
-        marker.CommandText = "INSERT OR REPLACE INTO AppMetadata (Key, Value) VALUES ('VeganSampleRecipesV2', $value)";
-        marker.Parameters.AddWithValue("$value", DateTime.UtcNow.ToString("O"));
-        marker.ExecuteNonQuery();
-        return added;
-    }
-
-    public void ApplySampleCookingTimes()
-    {
-        using var connection = OpenConnection();
-        using var transaction = connection.BeginTransaction();
-        foreach (var item in SampleRecipes.CookingTimes)
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = "UPDATE Recipes SET CookingTimeMinutes=$minutes WHERE Title=$title COLLATE NOCASE AND CookingTimeMinutes=0";
-            command.Parameters.AddWithValue("$minutes", item.Value);
-            command.Parameters.AddWithValue("$title", item.Key);
-            command.ExecuteNonQuery();
-        }
-        transaction.Commit();
-    }
-
-    public long Save(Recipe recipe, IEnumerable<IngredientDefinition>? ingredientsToAddToLibrary = null)
-    {
-        using var connection = OpenConnection();
-        using var transaction = connection.BeginTransaction();
-        var libraryAdditions = (ingredientsToAddToLibrary ?? [])
-            .GroupBy(ingredient => ingredient.Name, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
-
-        if (recipe.Id == 0)
-        {
-            using var insert = connection.CreateCommand();
-            insert.Transaction = transaction;
-            insert.CommandText = "INSERT INTO Recipes (Title, Country, Instructions, IsFavorite, SourceUrl, ImageData, CookingTimeMinutes, Servings) VALUES ($title, $cuisine, $instructions, $favorite, $url, $image, $cookingTime, $servings); SELECT last_insert_rowid();";
-            AddRecipeParameters(insert, recipe);
-            recipe.Id = (long)(insert.ExecuteScalar() ?? 0L);
-        }
-        else
-        {
-            using var update = connection.CreateCommand();
-            update.Transaction = transaction;
-            update.CommandText = "UPDATE Recipes SET Title=$title, Country=$cuisine, Instructions=$instructions, IsFavorite=$favorite, SourceUrl=$url, ImageData=$image, CookingTimeMinutes=$cookingTime, Servings=$servings WHERE Id=$id";
-            AddRecipeParameters(update, recipe);
-            update.Parameters.AddWithValue("$id", recipe.Id);
-            update.ExecuteNonQuery();
-
-            DeleteChildren(connection, transaction, recipe.Id);
-        }
-
-        InsertIngredients(connection, transaction, recipe.Id, recipe.Ingredients, libraryAdditions);
-        InsertChildren(connection, transaction, "Tools", recipe.Id, recipe.Tools);
-        transaction.Commit();
-        return recipe.Id;
-    }
-
-    public void Delete(long recipeId)
-    {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "DELETE FROM Recipes WHERE Id=$id";
-        command.Parameters.AddWithValue("$id", recipeId);
-        command.ExecuteNonQuery();
-    }
-
-    public void SetFavorite(long recipeId, bool isFavorite)
-    {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "UPDATE Recipes SET IsFavorite=$favorite WHERE Id=$id";
-        command.Parameters.AddWithValue("$favorite", isFavorite);
-        command.Parameters.AddWithValue("$id", recipeId);
-        command.ExecuteNonQuery();
-    }
-
-    private SqliteConnection OpenConnection()
-    {
-        var connection = new SqliteConnection(_connectionString);
-        connection.Open();
-        return connection;
-    }
-
-    private int GetSchemaVersion()
-    {
-        using var connection = OpenConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA user_version";
-        return Convert.ToInt32(command.ExecuteScalar());
-    }
-
-    private static void VerifyIntegrity(string databasePath)
-    {
-        if (!File.Exists(databasePath))
-            throw new FileNotFoundException("The recipe database could not be found.", databasePath);
-
-        using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadOnly,
-            ForeignKeys = true,
-            Pooling = false
-        }.ToString());
-        connection.Open();
-        using var command = connection.CreateCommand();
-        command.CommandText = "PRAGMA quick_check";
-        var result = Convert.ToString(command.ExecuteScalar());
-        if (!string.Equals(result, "ok", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"The recipe database failed its integrity check: {result}");
-    }
-
-    private void PruneBackups()
-    {
-        if (!Directory.Exists(_backupsFolder)) return;
-        foreach (var oldBackup in new DirectoryInfo(_backupsFolder)
-                     .GetFiles("recipes-*.db")
-                     .OrderByDescending(file => file.CreationTimeUtc)
-                     .Skip(BackupRetentionCount))
-            oldBackup.Delete();
-    }
-
-    private static void SeedIngredientLibrary(SqliteConnection connection, SqliteTransaction transaction)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT OR IGNORE INTO IngredientLibrary (Name)
-            SELECT DISTINCT TRIM(Name)
-            FROM Ingredients
-            WHERE LENGTH(TRIM(Name)) > 0;
-            """;
-        command.ExecuteNonQuery();
-    }
-
-    private static List<string> GetChildItems(SqliteConnection connection, string tableName, long recipeId)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT Name FROM {tableName} WHERE RecipeId=$id ORDER BY SortOrder, Id";
-        command.Parameters.AddWithValue("$id", recipeId);
-        using var reader = command.ExecuteReader();
-        var items = new List<string>();
-        while (reader.Read()) items.Add(reader.GetString(0));
-        return items;
-    }
-
-    private static List<RecipeIngredient> GetIngredients(SqliteConnection connection, long recipeId)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Name, Quantity, Unit FROM Ingredients WHERE RecipeId=$id ORDER BY SortOrder, Id";
-        command.Parameters.AddWithValue("$id", recipeId);
-        using var reader = command.ExecuteReader();
-        var items = new List<RecipeIngredient>();
-        while (reader.Read())
-        {
-            items.Add(new RecipeIngredient
-            {
-                Name = reader.GetString(0),
-                Quantity = reader.IsDBNull(1) ? null : reader.GetDouble(1),
-                Unit = reader.GetString(2)
-            });
-        }
-        return items;
-    }
-
-    private static void InsertIngredients(SqliteConnection connection, SqliteTransaction transaction, long recipeId,
-        IEnumerable<RecipeIngredient> items, IReadOnlyDictionary<string, IngredientDefinition> ingredientsToAddToLibrary)
-    {
-        var index = 0;
-        foreach (var item in items.Where(x => !string.IsNullOrWhiteSpace(x.Name)))
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = "INSERT INTO Ingredients (RecipeId, Name, Quantity, Unit, SortOrder) VALUES ($recipeId, $name, $quantity, $unit, $sortOrder)";
-            command.Parameters.AddWithValue("$recipeId", recipeId);
-            command.Parameters.AddWithValue("$name", item.Name.Trim());
-            command.Parameters.AddWithValue("$quantity", item.Quantity.HasValue ? item.Quantity.Value : DBNull.Value);
-            command.Parameters.AddWithValue("$unit", item.Unit.Trim());
-            command.Parameters.AddWithValue("$sortOrder", index++);
-            command.ExecuteNonQuery();
-
-            if (ingredientsToAddToLibrary.TryGetValue(item.Name.Trim(), out var libraryIngredient))
-            {
-                using var libraryCommand = connection.CreateCommand();
-                libraryCommand.Transaction = transaction;
-                libraryCommand.CommandText = "INSERT OR IGNORE INTO IngredientLibrary (Name, PluralName, Season, Category) VALUES ($name, $pluralName, $season, $category)";
-                libraryCommand.Parameters.AddWithValue("$name", item.Name.Trim());
-                libraryCommand.Parameters.AddWithValue("$pluralName", libraryIngredient.PluralName.Trim());
-                libraryCommand.Parameters.AddWithValue("$season", libraryIngredient.Season.Trim());
-                libraryCommand.Parameters.AddWithValue("$category", libraryIngredient.Category.Trim());
-                libraryCommand.ExecuteNonQuery();
-            }
-        }
-    }
-
-    private static void AddRecipeParameters(SqliteCommand command, Recipe recipe)
-    {
-        command.Parameters.AddWithValue("$title", recipe.Title.Trim());
-        command.Parameters.AddWithValue("$cuisine", recipe.Cuisine.Trim());
-        command.Parameters.AddWithValue("$instructions", recipe.Instructions.Trim());
-        command.Parameters.AddWithValue("$favorite", recipe.IsFavorite);
-        command.Parameters.AddWithValue("$url", recipe.SourceUrl.Trim());
-        command.Parameters.AddWithValue("$image", (object?)recipe.ImageData ?? DBNull.Value);
-        command.Parameters.AddWithValue("$cookingTime", recipe.CookingTimeMinutes);
-        command.Parameters.AddWithValue("$servings", Math.Max(1, recipe.Servings));
-    }
-
-    private static void EnsureColumn(SqliteConnection connection, SqliteTransaction transaction, string tableName, string columnName, string definition)
-    {
-        using var check = connection.CreateCommand();
-        check.Transaction = transaction;
-        check.CommandText = $"PRAGMA table_info({tableName})";
-        using var reader = check.ExecuteReader();
-        while (reader.Read())
-        {
-            if (reader.GetString(1).Equals(columnName, StringComparison.OrdinalIgnoreCase)) return;
-        }
-        reader.Close();
-        using var alter = connection.CreateCommand();
-        alter.Transaction = transaction;
-        alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition}";
-        alter.ExecuteNonQuery();
-    }
-
-    private static void DeleteChildren(SqliteConnection connection, SqliteTransaction transaction, long recipeId)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "DELETE FROM Ingredients WHERE RecipeId=$id; DELETE FROM Tools WHERE RecipeId=$id;";
-        command.Parameters.AddWithValue("$id", recipeId);
-        command.ExecuteNonQuery();
-    }
-
-    private static void InsertChildren(SqliteConnection connection, SqliteTransaction transaction, string tableName, long recipeId, IEnumerable<string> items)
-    {
-        var index = 0;
-        foreach (var item in items.Where(x => !string.IsNullOrWhiteSpace(x)))
-        {
-            using var command = connection.CreateCommand();
-            command.Transaction = transaction;
-            command.CommandText = $"INSERT INTO {tableName} (RecipeId, Name, SortOrder) VALUES ($recipeId, $name, $sortOrder)";
-            command.Parameters.AddWithValue("$recipeId", recipeId);
-            command.Parameters.AddWithValue("$name", item.Trim());
-            command.Parameters.AddWithValue("$sortOrder", index++);
-            command.ExecuteNonQuery();
-
-        }
-    }
-}
+            recipe.Ingredients = GetIngredients(connection, recipe.Id);´ÛŞí¢G§²ÚîÆ­yÒæÖRÒ—FVÒäæÖRåG&–Ò‚’À¢VçF—G’Ò—FVÒåVçF—G’À¢Væ—BÒ—FVÒåVæ—BåG&–Ò‚¢Ò’åFôÆ—7B‚’À¢FööÇ2Ò6†&VBåFööÇ2å6VÆV7B‡FööÂÓâFööÂåG&–Ò‚’’åv†W&R‡FööÂÓâFööÂäÆVæwF‚â’åFôÆ—7B‚¢Ó°¢f"FVf–æ—F–öç2Ò6†&VBä–æw&VF–VçG2å6VÆV7B†—FVÒÓâæWr–æw&VF–VçDFVf–æ—F–öà¢°¢æÖRÒ—FVÒäæÖRåG&–Ò‚’À¢ÇW&ÄæÖRÒ—FVÒåÇW&ÄæÖRåG&–Ò‚’À¢Æ–6W2Ò—FVÒäÆ–6W2åG&–Ò‚’À¢6V6öâÒ—FVÒå6V6öâåG&–Ò‚’À¢6FVv÷'’Ò—FVÒä6FVv÷'’åG&–Ò‚¢Ò’åFôÆ—7B‚“°¢&WGW&âæWrFV6öFVE&V6—U6†&R‡&V6—RÂFVf–æ—F–öç2“°¢Ğ¢6F6‚„f÷&ÖDW†6WF–öâ¢°¢F‡&÷s°¢Ğ¢6F6‚„W†6WF–öâW‚’v†Vâ†W‚—2–çfÆ–DFFW†6WF–öâ÷"§6öäW†6WF–öâ¢°¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R&V6—R6öFR—2FÖvVB÷"–æ6ö×ÆWFRâ"ÂW‚“°¢Ğ¢Ğ ¢&—fFR7FF–2fö–BfÆ–FFR…6†&VE&V6—R&V6—R¢°¢–b‡7G&–ærä—4çVÆÄ÷%v†—FU76R‡&V6—RåF—FÆR’ÇÂ&V6—RåF—FÆRäÆVæwF‚â#¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R†2â–çfÆ–BæÖRâ"“°¢–b‡&V6—Rä6öö¶–æuF–ÖTÖ–çWFW2—2Â÷"âCC¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R†2â–çfÆ–B6öö¶–ærF–ÖRâ"“°¢–b‡&V6—Rå6W'f–æw2—2Â÷"â¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R†2â–çfÆ–B6W'f–ær6÷VçBâ"“°¢–b‡&V6—Rä–ç7G'V7F–öç2äÆVæwF‚â#óÇÂ&V6—Rå6÷W&6UW&ÂäÆVæwF‚â%óÇÂ&V6—Rä7V—6–æRäÆVæwF‚â#¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R6öçF–ç2FW‡BF†B—2FöòÆöærâ"“°¢–b‡&V6—Rä–æw&VF–VçG2ä6÷VçBâ#ÇÂ&V6—RåFööÇ2ä6÷VçBâÇÂ&V6—RåFw2ä6÷VçBâS¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R6öçF–ç2FöòÖç’–æw&VF–VçG2ÂFööÇ2Â÷"Fw2â"“°¢–b‡&V6—Rä–æw&VF–VçG2äç’†—FVÒÓâ—FVÒ—2çVÆÀ¢ÇÂ7G&–ærä—4çVÆÄ÷%v†—FU76R†—FVÒäæÖR¢ÇÂ—FVÒäæÖRäÆVæwF‚â# ¢ÇÂ—FVÒåVæ—BäÆVæwF‚âS ¢ÇÂ—FVÒåÇW&ÄæÖRäÆVæwF‚â# ¢ÇÂ—FVÒäÆ–6W2äÆVæwF‚âó ¢ÇÂ—FVÒå6V6öâäÆVæwF‚âS ¢ÇÂ—FVÒä6FVv÷'’äÆVæwF‚â ¢ÇÂ—FVÒåVçF—G’—2ÃÒ÷"âóó’¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R6öçF–ç2â–çfÆ–B–æw&VF–VçBâ"“°¢–b‡&V6—RåFööÇ2äç’‡FööÂÓâFööÂäÆVæwF‚â#’¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R6öçF–ç2â–çfÆ–B¶—F6†VâFööÂâ"“°¢–b‡&V6—RåFw2äç’‡FrÓâ7G&–ærä—4çVÆÄ÷%v†—FU76R‡Fr’ÇÂFräÆVæwF‚âS’¢F‡&÷ræWrf÷&ÖDW†6WF–öâ‚%F†R6†&VB&V6—R6öçF–ç2â–çfÆ–BFrâ"“°¢Ğ ¢&—fFR6VÆVB6Æ726†&VE&V6—P¢°¢´§6öå&÷W'G”æÖR‚'B"•ÒV&Æ–27G&–ærF—FÆR²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚&2"•ÒV&Æ–27G&–ær7V—6–æR²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚&Ò"•ÒV&Æ–2–çB6öö¶–æuF–ÖTÖ–çWFW2²vWC²6WC²Ğ¢´§6öå&÷W'G”æÖR‚'2"•ÒV&Æ–2–çB6W'f–æw2²vWC²6WC²Ğ¢´§6öå&÷W'G”æÖR‚&’"•ÒV&Æ–27G&–ær–ç7G'V7F–öç2²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚'R"•ÒV&Æ–27G&–ær6÷W&6UW&Â²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚&r"•ÒV&Æ–2Æ—7CÅ6†&VD–æw&VF–VçCâ–æw&VF–VçG2²vWC²6WC²ÒÒµÓ°¢´§6öå&÷W'G”æÖR‚&²"•ÒV&Æ–2Æ—7CÇ7G&–æsâFööÇ2²vWC²6WC²ÒÒµÓ°¢´§6öå&÷W'G”æÖR‚&"•ÒV&Æ–2Æ—7CÇ7G&–æsâFw2²vWC²6WC²ÒÒµÓ°¢Ğ ¢&—fFR6VÆVB6Æ726†&VD–æw&VF–Vç@¢°¢´§6öå&÷W'G”æÖR‚&â"•ÒV&Æ–27G&–æræÖR²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚'"•ÒV&Æ–2F÷V&ÆSòVçF—G’²vWC²6WC²Ğ¢´§6öå&÷W'G”æÖR‚'R"•ÒV&Æ–27G&–ærVæ—B²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚'"•ÒV&Æ–27G&–ærÇW&ÄæÖR²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚'‚"•ÒV&Æ–27G&–ærÆ–6W2²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚'2"•ÒV&Æ–27G&–ær6V6öâ²vWC²6WC²ÒÒ7G&–æräV×G“°¢´§6öå&÷W'G”æÖR‚&2"•ÒV&Æ–27G&–ær6FVv÷'’²vWC²6WC²ÒÒ7G&–æräV×G“°¢Ğ§Ğ

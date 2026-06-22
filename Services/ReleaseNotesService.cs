@@ -30,6 +30,9 @@ public static class ReleaseNotesService
             new("Plural and season details are shared", "New ingredients can keep their plural name and seasonal information."),
             new("Organize ingredients by category", "Ingredients can be labeled as fruit, vegetable, meat, dairy, and more. Categories are included in RM1 sharing codes."),
             new("Vegan starter recipes", "New installations include twenty vegan recipes with quantities, tools, cooking times, and categorized ingredients for easy testing."),
+            new("Free-form recipe tags", "Add your own tags to recipes, search by them, and keep them when sharing with RM1 codes."),
+            new("Import a recipe photo offline", "Turn one or more recipe photos into an editable draft using Windows OCR. The photos and recognized text stay on your computer."),
+            new("Ingredient aliases", "Store multiple Dutch, English, singular, or plural names for an ingredient. Aliases are used by search, photo import, and RM1 sharing."),
             new("Find recipes by name", "Search by partial names or small spelling mistakes."),
             new("Cleaner recipe list", "The main list now focuses on recipe names and favorites, with clearer button hover colors and copy confirmations.")
         ])
