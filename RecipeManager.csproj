@@ -7,7 +7,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>RecipeManager</AssemblyName>
     <RootNamespace>RecipeManager</RootNamespace>
-    <Version>1.0.4</Version>
+    <Version>1.0.5</Version>
+    <ApplicationIcon>Assets\RecipeManager.ico</ApplicationIcon>
     <UpdateRepository Condition="'$(UpdateRepository)' == ''">sanhai92/RecipeManager</UpdateRepository>
   </PropertyGroup>
 
@@ -21,6 +22,7 @@
 
   <ItemGroup>
     <None Update="Scripts\OfflineOcr.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Resource Include="Assets\RecipeManager.ico" />
     <Compile Remove="OcrSmoke\**\*.cs" />
   </ItemGroup>
 </Project>

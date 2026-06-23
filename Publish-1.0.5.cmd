@@ -2,7 +2,7 @@
 setlocal
 cd /d "%~dp0"
 
-set "VERSION=1.0.4"
+set "VERSION=1.0.5"
 
 echo Preparing Recipe Manager %VERSION%...
 git add -A || goto :failed

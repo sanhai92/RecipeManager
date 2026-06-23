@@ -43,6 +43,14 @@ public static class ReleaseNotesService
             new("Better Dutch ingredient matching", "Common Dutch words and plurals such as aardappels, knoflook, and rode ui are matched to known ingredients more reliably."),
             new("Review unrecognized photo text", "The editor shows the text that was found but not confidently imported, so nothing important disappears silently."),
             new("Ingredient aliases", "Ingredients can store alternate names and plurals, and those aliases are included when sharing recipes.")
+        ]),
+        new("1.0.5", "Faster inline editing",
+        [
+            new("Edit recipes on the main page", "The Edit button now unlocks the recipe details directly on the main screen, with Save and Cancel controls beside the fields."),
+            new("Compact ingredient editing", "Ingredients can be adjusted in a small table with quantity, unit, ingredient picker, add, and remove controls."),
+            new("Clear editing guard", "Clicking outside the recipe panel while editing reminds you to save or cancel first, and briefly highlights the action buttons."),
+            new("Better app icon", "The taskbar, app window, installer, and desktop shortcut now use a more recognizable Recipe Manager icon."),
+            new("Polished dropdowns", "The main filters use the Fresh Garden pill style, while ingredient picking avoids unwanted edge-hover scrolling.")
         ])
     ];
 

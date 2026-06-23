@@ -27,6 +27,7 @@ SetupLogging=yes
 CloseApplications=yes
 RestartApplications=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=..\Assets\RecipeManager.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 

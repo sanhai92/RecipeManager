@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media.Imaging;
@@ -8,6 +10,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Globalization;
 using System.Windows.Input;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using RecipeManager.Data;
 using RecipeManager.Models;
@@ -21,17 +24,25 @@ public partial class MainWindow : Window
     private readonly UpdateService _updateService = new();
     private readonly OfflinePhotoImportService _photoImportService = new();
     private readonly ObservableCollection<Recipe> _visibleRecipes = [];
+    private readonly ObservableCollection<InlineIngredientRow> _inlineIngredientRows = [];
     private readonly List<IngredientChoice> _pantryChoices = [];
     private List<Recipe> _allRecipes = [];
     private int _displayServings = 1;
     private CancellationTokenSource? _copyToastCancellation;
+    private DispatcherTimer? _editButtonBlinkTimer;
+    private bool _isInlineEditing;
+
+    public ObservableCollection<string> InlineIngredientNames { get; } = [];
 
     public MainWindow()
     {
         InitializeComponent();
+        DataContext = this;
+        InlineIngredientsGrid.ItemsSource = _inlineIngredientRows;
         CurrentSeasonText.Text = $"Season · {GetCurrentSeason(DateTime.Now)}";
         VersionText.Text = $"v{_updateService.CurrentVersion}";
         Loaded += MainWindow_Loaded;
+        PreviewMouseDown += MainWindow_PreviewMouseDown;
         RecipesList.ItemsSource = _visibleRecipes;
         SeasonalFilterBox.ItemsSource = new[] { "All seasons", "Spring", "Summer", "Autumn", "Winter" };
         FavoriteFilterBox.ItemsSource = new[] { "All", "Yes", "No" };
@@ -226,6 +237,9 @@ public partial class MainWindow : Window
 
     private void ShowDetails(Recipe? recipe)
     {
+        if (_isInlineEditing)
+            EndInlineEditMode();
+
         EmptyState.Visibility = recipe is null ? Visibility.Visible : Visibility.Collapsed;
         DetailsPanel.Visibility = recipe is null ? Visibility.Collapsed : Visibility.Visible;
         EditButton.IsEnabled = recipe is not null;
@@ -354,12 +368,223 @@ public partial class MainWindow : Window
     private void Edit_Click(object sender, RoutedEventArgs e)
     {
         if (SelectedRecipe is not { } selected) return;
-        var editor = new RecipeEditorWindow(_database.GetIngredientLibrary(), selected) { Owner = this };
-        if (editor.ShowDialog() == true)
+        BeginInlineEdit(selected);
+    }
+
+    private void BeginInlineEdit(Recipe recipe)
+    {
+        _isInlineEditing = true;
+        InlineTitleBox.Text = recipe.Title;
+        InlineCuisineBox.Text = recipe.Cuisine;
+        InlineTagsBox.Text = string.Join(", ", recipe.Tags);
+        InlineServingsBox.Text = Math.Max(1, recipe.Servings).ToString(CultureInfo.CurrentCulture);
+        InlineSourceUrlBox.Text = recipe.SourceUrl;
+        InlineToolsBox.Text = string.Join(Environment.NewLine, recipe.Tools);
+        InlineInstructionsBox.Text = recipe.Instructions;
+
+        _inlineIngredientRows.Clear();
+        foreach (var ingredient in recipe.Ingredients)
         {
-            _database.Save(editor.Recipe);
-            ReloadRecipes(editor.Recipe.Id);
+            _inlineIngredientRows.Add(new InlineIngredientRow
+            {
+                QuantityText = ingredient.Quantity?.ToString("0.##", CultureInfo.CurrentCulture) ?? string.Empty,
+                Unit = ingredient.Unit,
+                Name = ingredient.Name
+            });
         }
+
+        ToggleInlineEditMode(true);
+        StatusText.Text = $"Editing {recipe.Title}";
+        InlineTitleBox.Focus();
+        InlineTitleBox.SelectAll();
+    }
+
+    private void SaveInlineEdit_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedRecipe is not { } selected) return;
+
+        InlineIngredientsGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        InlineIngredientsGrid.CommitEdit(DataGridEditingUnit.Row, true);
+
+        var title = InlineTitleBox.Text.Trim();
+        if (title.Length == 0)
+        {
+            MessageBox.Show(this, "Recipe name is required.", "Cannot save recipe", MessageBoxButton.OK, MessageBoxImage.Information);
+            InlineTitleBox.Focus();
+            return;
+        }
+
+        if (!int.TryParse(InlineServingsBox.Text.Trim(), NumberStyles.Integer, CultureInfo.CurrentCulture, out var servings)
+            || servings < 1 || servings > 100)
+        {
+            MessageBox.Show(this, "Servings must be a whole number between 1 and 100.", "Cannot save recipe", MessageBoxButton.OK, MessageBoxImage.Information);
+            InlineServingsBox.Focus();
+            return;
+        }
+
+        var sourceUrl = InlineSourceUrlBox.Text.Trim();
+        if (sourceUrl.Length > 0
+            && (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)))
+        {
+            MessageBox.Show(this, "Recipe website must be a valid http or https address.", "Cannot save recipe", MessageBoxButton.OK, MessageBoxImage.Information);
+            InlineSourceUrlBox.Focus();
+            return;
+        }
+
+        var library = _database.GetIngredientLibrary();
+        var ingredients = new List<RecipeIngredient>();
+        foreach (var row in _inlineIngredientRows)
+        {
+            var name = row.Name.Trim();
+            if (name.Length == 0) continue;
+
+            var definition = library.FirstOrDefault(definition =>
+                BilingualSearchService.MatchesIngredient(definition, name));
+            if (definition is null)
+            {
+                MessageBox.Show(this,
+                    $"'{name}' is not in your ingredient library yet.\n\nAdd it through Ingredients first, then choose it here.",
+                    "Unknown ingredient", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            double? quantity = null;
+            if (!string.IsNullOrWhiteSpace(row.QuantityText))
+            {
+                if (!double.TryParse(row.QuantityText.Trim(), NumberStyles.Float, CultureInfo.CurrentCulture, out var parsed)
+                    || parsed < 0)
+                {
+                    MessageBox.Show(this, $"Quantity for '{name}' is not valid.", "Cannot save recipe", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                quantity = parsed;
+            }
+
+            ingredients.Add(new RecipeIngredient
+            {
+                Name = definition.Name,
+                Quantity = quantity,
+                Unit = row.Unit.Trim()
+            });
+        }
+
+        selected.Title = title;
+        selected.Cuisine = InlineCuisineBox.Text.Trim();
+        selected.Servings = servings;
+        selected.SourceUrl = sourceUrl;
+        selected.Instructions = InlineInstructionsBox.Text.Trim();
+        selected.Ingredients = ingredients;
+        selected.Tools = SplitLines(InlineToolsBox.Text);
+        selected.Tags = SplitTags(InlineTagsBox.Text);
+
+        _database.Save(selected);
+        EndInlineEditMode();
+        LoadPantryChoices();
+        ReloadRecipes(selected.Id);
+        StatusText.Text = $"Saved {selected.Title}";
+    }
+
+    private void CancelInlineEdit_Click(object sender, RoutedEventArgs e)
+    {
+        EndInlineEditMode();
+        ShowDetails(SelectedRecipe);
+        StatusText.Text = "Editing cancelled";
+    }
+
+    private void AddInlineIngredient_Click(object sender, RoutedEventArgs e)
+    {
+        _inlineIngredientRows.Add(new InlineIngredientRow());
+        InlineIngredientsGrid.SelectedIndex = _inlineIngredientRows.Count - 1;
+        InlineIngredientsGrid.ScrollIntoView(InlineIngredientsGrid.SelectedItem);
+    }
+
+    private void RemoveInlineIngredient_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is InlineIngredientRow row)
+            _inlineIngredientRows.Remove(row);
+    }
+
+    private void InlineIngredientPicker_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is InlineIngredientRow row)
+            row.IsPickerOpen = false;
+    }
+
+    private void ToggleInlineEditMode(bool isEditing)
+    {
+        DetailReadHeader.Visibility = isEditing ? Visibility.Collapsed : Visibility.Visible;
+        InlineEditHeader.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
+        DetailReadSections.Visibility = isEditing ? Visibility.Collapsed : Visibility.Visible;
+        InlineEditSections.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
+        DetailActionButtons.Visibility = isEditing ? Visibility.Collapsed : Visibility.Visible;
+        EditButton.Visibility = isEditing ? Visibility.Collapsed : Visibility.Visible;
+        SaveInlineEditButton.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
+        CancelInlineEditButton.Visibility = isEditing ? Visibility.Visible : Visibility.Collapsed;
+        FavoriteButton.IsEnabled = !isEditing;
+        RecipesList.IsEnabled = !isEditing;
+    }
+
+    private void EndInlineEditMode()
+    {
+        _isInlineEditing = false;
+        ToggleInlineEditMode(false);
+        _inlineIngredientRows.Clear();
+        StopEditButtonBlink();
+    }
+
+    private void MainWindow_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_isInlineEditing) return;
+        if (IsInsideRecipePanel(e.OriginalSource as DependencyObject)) return;
+
+        e.Handled = true;
+        ShowCopyToast("Finish editing your recipe first");
+        BlinkInlineEditButtons();
+    }
+
+    private bool IsInsideRecipePanel(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (ReferenceEquals(source, DetailsPanel))
+                return true;
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
+    }
+
+    private void BlinkInlineEditButtons()
+    {
+        StopEditButtonBlink();
+        var normalSave = SaveInlineEditButton.Background;
+        var normalCancel = CancelInlineEditButton.Background;
+        var highlight = (Brush)FindResource("PeachBrush");
+        var ticks = 0;
+
+        _editButtonBlinkTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        _editButtonBlinkTimer.Tick += (_, _) =>
+        {
+            ticks++;
+            var isHighlighted = ticks % 2 == 1;
+            SaveInlineEditButton.Background = isHighlighted ? highlight : normalSave;
+            CancelInlineEditButton.Background = isHighlighted ? highlight : normalCancel;
+
+            if (ticks >= 6)
+            {
+                StopEditButtonBlink();
+                SaveInlineEditButton.Background = normalSave;
+                CancelInlineEditButton.Background = normalCancel;
+            }
+        };
+        _editButtonBlinkTimer.Start();
+    }
+
+    private void StopEditButtonBlink()
+    {
+        _editButtonBlinkTimer?.Stop();
+        _editButtonBlinkTimer = null;
     }
 
     private void Delete_Click(object sender, RoutedEventArgs e)
@@ -473,6 +698,12 @@ public partial class MainWindow : Window
                 Category = x.Category,
                 IsSelected = selected.Contains(x.Name)
             }));
+        InlineIngredientNames.Clear();
+        foreach (var name in _pantryChoices
+                     .Select(choice => choice.Name)
+                     .Where(name => !string.IsNullOrWhiteSpace(name))
+                     .OrderBy(name => name, StringComparer.CurrentCultureIgnoreCase))
+            InlineIngredientNames.Add(name);
         RefreshPantryIngredientList();
         RefreshSelectedPantryChips();
     }
@@ -676,6 +907,19 @@ public partial class MainWindow : Window
         return name + "s";
     }
 
+    private static List<string> SplitLines(string text) => text
+        .Split(["\r\n", "\n", "\r"], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private static List<string> SplitTags(string text) => text
+        .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(tag => tag.Trim().TrimStart('#'))
+        .Where(tag => !string.IsNullOrWhiteSpace(tag))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
     private static string GetCurrentSeason(DateTime date) => date.Month switch
     {
         3 or 4 or 5 => "Spring",
@@ -846,5 +1090,61 @@ public partial class MainWindow : Window
         var summary = ReleaseNotesService.GetCurrentVersionSummary(_updateService.CurrentVersion);
         if (summary is not null)
             new WhatsNewWindow(summary, showVersionComparison: false) { Owner = this }.ShowDialog();
+    }
+
+    private sealed class InlineIngredientRow : INotifyPropertyChanged
+    {
+        private string _quantityText = string.Empty;
+        private string _unit = string.Empty;
+        private string _name = string.Empty;
+        private bool _isPickerOpen;
+
+        public string QuantityText
+        {
+            get => _quantityText;
+            set => SetField(ref _quantityText, value);
+        }
+
+        public string Unit
+        {
+            get => _unit;
+            set => SetField(ref _unit, value);
+        }
+
+        public string Name
+        {
+            get => _name;
+            set
+            {
+                if (SetField(ref _name, value))
+                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(DisplayName)));
+            }
+        }
+
+        public bool IsPickerOpen
+        {
+            get => _isPickerOpen;
+            set => SetField(ref _isPickerOpen, value);
+        }
+
+        public string DisplayName => string.IsNullOrWhiteSpace(Name) ? "Choose ingredient" : Name;
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private bool SetField(ref string field, string value, [CallerMemberName] string? propertyName = null)
+        {
+            if (field == value) return false;
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            return true;
+        }
+
+        private bool SetField(ref bool field, bool value, [CallerMemberName] string? propertyName = null)
+        {
+            if (field == value) return false;
+            field = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            return true;
+        }
     }
 }
