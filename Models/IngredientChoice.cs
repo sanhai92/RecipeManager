@@ -4,6 +4,7 @@ public sealed class IngredientChoice
 {
     public string Name { get; init; } = string.Empty;
     public string PluralName { get; init; } = string.Empty;
+    public string Aliases { get; init; } = string.Empty;
     public string Season { get; init; } = string.Empty;
     public string Category { get; init; } = string.Empty;
     public bool IsSelected { get; set; }

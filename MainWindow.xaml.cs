@@ -7,6 +7,7 @@ using System.Windows.Documents;
 using System.Diagnostics;
 using System.IO;
 using System.Globalization;
+using System.Windows.Input;
 using Microsoft.Win32;
 using RecipeManager.Data;
 using RecipeManager.Models;
@@ -18,6 +19,7 @@ public partial class MainWindow : Window
 {
     private readonly DatabaseService _database = new();
     private readonly UpdateService _updateService = new();
+    private readonly OfflinePhotoImportService _photoImportService = new();
     private readonly ObservableCollection<Recipe> _visibleRecipes = [];
     private readonly List<IngredientChoice> _pantryChoices = [];
     private List<Recipe> _allRecipes = [];
@@ -31,6 +33,10 @@ public partial class MainWindow : Window
         VersionText.Text = $"v{_updateService.CurrentVersion}";
         Loaded += MainWindow_Loaded;
         RecipesList.ItemsSource = _visibleRecipes;
+        SeasonalFilterBox.ItemsSource = new[] { "All seasons", "Spring", "Summer", "Autumn", "Winter" };
+        FavoriteFilterBox.ItemsSource = new[] { "All", "Yes", "No" };
+        SeasonalFilterBox.SelectedIndex = 0;
+        FavoriteFilterBox.SelectedIndex = 0;
 
         try
         {
@@ -51,6 +57,8 @@ public partial class MainWindow : Window
     private void ReloadRecipes(long selectId = 0)
     {
         _allRecipes = _database.GetRecipes();
+        ApplyProteinIcons();
+        RefreshCuisineFilter();
         ApplyFilters();
         if (selectId != 0)
             RecipesList.SelectedItem = _visibleRecipes.FirstOrDefault(x => x.Id == selectId);
@@ -61,10 +69,14 @@ public partial class MainWindow : Window
         var selectedId = SelectedRecipe?.Id ?? 0;
         var pantry = GetSelectedPantryIngredients();
         var nameSearch = RecipeNameSearchBox?.Text.Trim() ?? string.Empty;
+        var tagSearch = TagSearchBox?.Text.Trim() ?? string.Empty;
         IEnumerable<Recipe> filtered = _allRecipes;
 
         if (nameSearch.Length > 0)
             filtered = filtered.Where(recipe => BilingualSearchService.IsLooseMatch(recipe.Title, nameSearch));
+
+        if (tagSearch.Length > 0)
+            filtered = filtered.Where(recipe => BilingualSearchService.IsLooseMatch(string.Join(' ', recipe.Tags), tagSearch));
 
         if (pantry.Count > 0)
         {
@@ -72,26 +84,27 @@ public partial class MainWindow : Window
                 recipe.Ingredients.Any(recipeIngredient => IngredientMatches(recipeIngredient.Name, searched))));
         }
 
-        if (FavoritesOnlyBox.IsChecked == true)
+        if (FavoriteFilterBox?.SelectedItem?.ToString() == "Yes")
             filtered = filtered.Where(x => x.IsFavorite);
+        else if (FavoriteFilterBox?.SelectedItem?.ToString() == "No")
+            filtered = filtered.Where(x => !x.IsFavorite);
 
-        if (SeasonalOnlyBox.IsChecked == true)
-        {
-            var currentSeason = GetCurrentSeason(DateTime.Now);
-            var seasonalIngredients = _pantryChoices
-                .Where(x => x.Season.Equals(currentSeason, StringComparison.OrdinalIgnoreCase))
-                .Select(x => x.Name)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            filtered = filtered.Where(recipe => recipe.Ingredients.Any(x => seasonalIngredients.Contains(x.Name)));
-        }
+        var selectedSeason = SeasonalFilterBox?.SelectedItem?.ToString();
+        if (!string.IsNullOrWhiteSpace(selectedSeason) && selectedSeason != "All seasons")
+            filtered = filtered.Where(recipe => RecipeMatchesSeason(recipe, selectedSeason));
+
+        var selectedCuisine = CuisineFilterBox?.SelectedItem?.ToString();
+        if (!string.IsNullOrWhiteSpace(selectedCuisine) && selectedCuisine != "All cuisines")
+            filtered = filtered.Where(recipe => recipe.Cuisine.Equals(selectedCuisine, StringComparison.OrdinalIgnoreCase));
 
         var results = filtered.ToList();
         _visibleRecipes.Clear();
         foreach (var recipe in results) _visibleRecipes.Add(recipe);
 
-        ListHeading.Text = nameSearch.Length > 0
-            ? "Matching recipes"
-            : pantry.Count > 0 ? "Recipes with these ingredients" : "All recipes";
+        var hasFilters = nameSearch.Length > 0 || tagSearch.Length > 0 || pantry.Count > 0
+            || FavoriteFilterBox?.SelectedIndex > 0 || SeasonalFilterBox?.SelectedIndex > 0
+            || CuisineFilterBox?.SelectedIndex > 0;
+        ListHeading.Text = hasFilters ? "Matching recipes" : "All recipes";
         StatusText.Text = pantry.Count > 0
             ? $"{results.Count} recipe{(results.Count == 1 ? "" : "s")} contain all searched ingredients"
             : $"{results.Count} recipe{(results.Count == 1 ? "" : "s")}";
@@ -112,10 +125,104 @@ public partial class MainWindow : Window
 
     private static string NormalizeIngredient(string value) => value.Trim().ToLowerInvariant();
 
-    private void RecipeNameSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+    private bool RecipeMatchesSeason(Recipe recipe, string season)
+    {
+        var seasonalIngredients = _pantryChoices
+            .Where(choice => choice.Season.Equals(season, StringComparison.OrdinalIgnoreCase))
+            .Select(choice => choice.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return recipe.Ingredients.Any(ingredient =>
+            seasonalIngredients.Any(seasonal => IngredientMatches(ingredient.Name, seasonal)));
+    }
+
+    private void RecipeSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (IsLoaded) ApplyFilters();
     }
+
+    private void FilterSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IsLoaded) ApplyFilters();
+    }
+
+    private void PantryPopupButton_Click(object sender, RoutedEventArgs e) =>
+        PantryPopup.IsOpen = !PantryPopup.IsOpen;
+
+    private void RefreshCuisineFilter()
+    {
+        if (CuisineFilterBox is null) return;
+        var selected = CuisineFilterBox.SelectedItem?.ToString() ?? "All cuisines";
+        var cuisines = _allRecipes.Select(recipe => recipe.Cuisine.Trim())
+            .Where(cuisine => cuisine.Length > 0)
+            .Distinct(StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(cuisine => cuisine, StringComparer.CurrentCultureIgnoreCase)
+            .Prepend("All cuisines")
+            .ToList();
+        CuisineFilterBox.ItemsSource = cuisines;
+        CuisineFilterBox.SelectedItem = cuisines.Contains(selected, StringComparer.CurrentCultureIgnoreCase)
+            ? cuisines.First(cuisine => cuisine.Equals(selected, StringComparison.CurrentCultureIgnoreCase))
+            : "All cuisines";
+    }
+
+    private void ApplyProteinIcons()
+    {
+        foreach (var recipe in _allRecipes)
+        {
+            var hasChicken = recipe.Ingredients.Any(ingredient => IsChicken(ingredient.Name));
+            var hasFish = recipe.Ingredients.Any(ingredient => IsFish(ingredient.Name));
+            var hasMeat = recipe.Ingredients.Any(ingredient => IsMeat(ingredient.Name));
+            var icons = new List<string>();
+            var descriptions = new List<string>();
+            if (hasMeat) { icons.Add("🥩"); descriptions.Add("Meat"); }
+            if (hasFish) { icons.Add("🐟"); descriptions.Add("Fish or seafood"); }
+            if (hasChicken) { icons.Add("🍗"); descriptions.Add("Chicken"); }
+            if (icons.Count == 0) { icons.Add("🥦"); descriptions.Add("No meat, fish, or chicken"); }
+            recipe.ProteinIcons = string.Join(" ", icons);
+            recipe.ProteinIconsDescription = string.Join(", ", descriptions);
+            recipe.ProteinKinds = descriptions.Select(description => description switch
+            {
+                "Meat" => "Meat",
+                "Fish or seafood" => "Fish",
+                "Chicken" => "Chicken",
+                _ => "Vegetable"
+            }).ToList();
+        }
+    }
+
+    private bool IsChicken(string ingredientName)
+    {
+        if (IsPlantBasedAlternative(ingredientName)) return false;
+        return ContainsAny(ingredientName, "chicken", "chicken breast", "poultry", "hen", "kip", "kipfilet", "kippenborst")
+            || BilingualSearchService.AreEquivalent(ingredientName, "chicken")
+            || FindIngredientCategory(ingredientName).Equals("Poultry", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsFish(string ingredientName)
+    {
+        if (IsPlantBasedAlternative(ingredientName)) return false;
+        return FindIngredientCategory(ingredientName).Equals("Fish & Seafood", StringComparison.OrdinalIgnoreCase)
+            || BilingualSearchService.AreEquivalent(ingredientName, "fish")
+            || BilingualSearchService.AreEquivalent(ingredientName, "shrimp")
+            || ContainsAny(ingredientName, "salmon", "tuna", "cod", "haddock", "anchovy", "sardine", "prawn", "crab", "lobster", "mussel");
+    }
+
+    private bool IsMeat(string ingredientName)
+    {
+        if (IsPlantBasedAlternative(ingredientName) || IsChicken(ingredientName) || IsFish(ingredientName)) return false;
+        return FindIngredientCategory(ingredientName).Equals("Meat", StringComparison.OrdinalIgnoreCase)
+            || ContainsAny(ingredientName, "beef", "pork", "lamb", "veal", "bacon", "ham", "steak", "minced meat", "ground meat", "ground beef", "sausage", "rundvlees", "varkensvlees");
+    }
+
+    private string FindIngredientCategory(string ingredientName) => _pantryChoices
+        .FirstOrDefault(choice => choice.Name.Equals(ingredientName, StringComparison.OrdinalIgnoreCase)
+            || (!string.IsNullOrWhiteSpace(choice.PluralName)
+                && choice.PluralName.Equals(ingredientName, StringComparison.OrdinalIgnoreCase)))?.Category ?? string.Empty;
+
+    private static bool IsPlantBasedAlternative(string ingredientName) =>
+        ContainsAny(ingredientName, "vegan", "vegetarian", "plant based", "plant-based", "meatless", "mock");
+
+    private static bool ContainsAny(string value, params string[] terms) =>
+        terms.Any(term => value.Contains(term, StringComparison.OrdinalIgnoreCase));
 
     private void ShowDetails(Recipe? recipe)
     {
@@ -126,15 +233,20 @@ public partial class MainWindow : Window
         if (recipe is null) return;
 
         DetailTitle.Text = recipe.Title;
+        DetailProteinIcons.ItemsSource = recipe.ProteinKinds;
+        DetailProteinIcons.ToolTip = recipe.ProteinIconsDescription;
         DetailCuisine.Text = recipe.CuisineDisplay;
+        DetailTagsItems.ItemsSource = recipe.Tags;
+        DetailTagsItems.Visibility = recipe.Tags.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         _displayServings = Math.Max(1, recipe.Servings);
         ServingCountText.Text = _displayServings.ToString();
         RenderIngredients(recipe);
         DetailTools.Text = recipe.ToolsDisplay;
         DetailInstructions.Text = string.IsNullOrWhiteSpace(recipe.Instructions) ? "No instructions added." : recipe.Instructions;
         FavoriteButton.Content = recipe.FavoriteGlyph;
-        DetailImageBorder.Visibility = recipe.ImageData is { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+        DetailImageBorder.Visibility = Visibility.Visible;
         DetailImage.Source = recipe.ImageData is { Length: > 0 } ? LoadImage(recipe.ImageData) : null;
+        DetailImagePlaceholder.Visibility = recipe.ImageData is { Length: > 0 } ? Visibility.Collapsed : Visibility.Visible;
         OpenUrlButton.Visibility = string.IsNullOrWhiteSpace(recipe.SourceUrl) ? Visibility.Collapsed : Visibility.Visible;
         OpenUrlButton.ToolTip = recipe.SourceUrl;
     }
@@ -190,6 +302,52 @@ public partial class MainWindow : Window
         {
             var id = _database.Save(editor.Recipe);
             ReloadRecipes(id);
+        }
+    }
+
+    private async void ImportPhoto_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose one or more recipe photos",
+            Filter = "Image files (*.jpg;*.jpeg;*.png;*.bmp;*.tif;*.tiff)|*.jpg;*.jpeg;*.png;*.bmp;*.tif;*.tiff|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = true
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        try
+        {
+            Mouse.OverrideCursor = Cursors.Wait;
+            PhotoImportProgressOverlay.Visibility = Visibility.Visible;
+            StatusText.Text = "Reading recipe photo offline…";
+            var imported = await _photoImportService.ImportAsync(dialog.FileNames);
+            PhotoImportProgressOverlay.Visibility = Visibility.Collapsed;
+            Mouse.OverrideCursor = null;
+
+            var editor = new RecipeEditorWindow(_database.GetIngredientLibrary(), imported.Recipe, imported.RawText) { Owner = this };
+            if (editor.ShowDialog() != true)
+            {
+                StatusText.Text = "Photo import cancelled";
+                return;
+            }
+
+            var id = _database.Save(editor.Recipe);
+            LoadPantryChoices();
+            ReloadRecipes(id);
+            StatusText.Text = $"Imported {editor.Recipe.Title} from photo";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                $"The photo could not be imported offline.\n\n{ex.Message}\n\nTry a sharper photo with good lighting, or install the matching OCR language in Windows Language settings.",
+                "Photo import failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Photo import failed";
+        }
+        finally
+        {
+            PhotoImportProgressOverlay.Visibility = Visibility.Collapsed;
+            Mouse.OverrideCursor = null;
         }
     }
 
@@ -258,13 +416,38 @@ public partial class MainWindow : Window
 
     private void PantryIngredientChanged(object sender, RoutedEventArgs e)
     {
+        RefreshSelectedPantryChips();
         if (IsLoaded) ApplyFilters();
+    }
+
+    private void RemovePantryIngredient_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not IngredientChoice ingredient) return;
+        ingredient.IsSelected = false;
+        RefreshPantryIngredientList();
+        RefreshSelectedPantryChips();
+        ApplyFilters();
     }
 
     private void ClearPantry_Click(object sender, RoutedEventArgs e)
     {
         foreach (var ingredient in _pantryChoices) ingredient.IsSelected = false;
         RefreshPantryIngredientList();
+        RefreshSelectedPantryChips();
+        ApplyFilters();
+    }
+
+    private void ClearAllFilters_Click(object sender, RoutedEventArgs e)
+    {
+        RecipeNameSearchBox.Clear();
+        TagSearchBox.Clear();
+        SeasonalFilterBox.SelectedIndex = 0;
+        FavoriteFilterBox.SelectedIndex = 0;
+        CuisineFilterBox.SelectedIndex = 0;
+        PantryLibrarySearchBox.Clear();
+        foreach (var ingredient in _pantryChoices) ingredient.IsSelected = false;
+        RefreshPantryIngredientList();
+        RefreshSelectedPantryChips();
         ApplyFilters();
     }
 
@@ -285,19 +468,34 @@ public partial class MainWindow : Window
             {
                 Name = x.Name,
                 PluralName = x.PluralName,
+                Aliases = x.Aliases,
                 Season = x.Season,
                 Category = x.Category,
                 IsSelected = selected.Contains(x.Name)
             }));
         RefreshPantryIngredientList();
+        RefreshSelectedPantryChips();
     }
 
     private void RefreshPantryIngredientList()
     {
         var search = PantryLibrarySearchBox?.Text.Trim() ?? string.Empty;
         PantryIngredientsList.ItemsSource = _pantryChoices
-            .Where(x => search.Length == 0 || BilingualSearchService.IsLooseMatch($"{x.Name} {x.PluralName} {x.Category}", search))
+            .Where(x => search.Length == 0 || BilingualSearchService.IsLooseMatch($"{x.Name} {x.PluralName} {x.Aliases}", search))
             .ToList();
+    }
+
+    private void RefreshSelectedPantryChips()
+    {
+        var selected = _pantryChoices.Where(ingredient => ingredient.IsSelected).ToList();
+        SelectedPantryChips.ItemsSource = selected;
+        PantrySelectionSummary.Text = selected.Count == 0
+            ? string.Empty
+            : "Filtering with: " + string.Join(", ", selected.Select(ingredient => ingredient.Name));
+        PantrySelectionSummary.ToolTip = selected.Count == 0
+            ? null
+            : string.Join(Environment.NewLine, selected.Select(ingredient => ingredient.Name));
+        PantrySelectionSummary.Visibility = selected.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void OpenUrl_Click(object sender, RoutedEventArgs e)

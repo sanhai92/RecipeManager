@@ -1,7 +1,7 @@
 <Window x:Class="RecipeManager.IngredientManagerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Manage ingredients" Height="600" Width="900" MinHeight="480" MinWidth="820"
+        Title="Manage ingredients" Height="620" Width="1100" MinHeight="500" MinWidth="1000"
         WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
     <Border Margin="18" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource GardenBorderBrush}"
             BorderThickness="1" CornerRadius="10" Padding="24">
@@ -25,6 +25,8 @@
                     <ColumnDefinition Width="14"/>
                     <ColumnDefinition Width="150"/>
                     <ColumnDefinition Width="14"/>
+                    <ColumnDefinition Width="220"/>
+                    <ColumnDefinition Width="14"/>
                     <ColumnDefinition Width="130"/>
                     <ColumnDefinition Width="14"/>
                     <ColumnDefinition Width="155"/>
@@ -39,14 +41,18 @@
                     <TextBox x:Name="PluralNameBox" FontSize="15" VerticalContentAlignment="Center" ToolTip="For example: apples"/>
                 </StackPanel>
                 <StackPanel Grid.Column="4">
+                    <TextBlock Text="Aliases (comma-separated)" FontWeight="SemiBold" Foreground="{StaticResource HeaderBrush}" Margin="0,0,0,4"/>
+                    <TextBox x:Name="AliasesBox" FontSize="15" VerticalContentAlignment="Center" ToolTip="For example: aardappel, aardappels, aardappelen"/>
+                </StackPanel>
+                <StackPanel Grid.Column="6">
                     <TextBlock Text="Season (optional)" FontWeight="SemiBold" Foreground="{StaticResource HeaderBrush}" Margin="0,0,0,4"/>
                     <ComboBox x:Name="SeasonBox" Padding="8,7" BorderBrush="{StaticResource GardenBorderBrush}" Background="#FFFFFA"/>
                 </StackPanel>
-                <StackPanel Grid.Column="6">
+                <StackPanel Grid.Column="8">
                     <TextBlock Text="Category (optional)" FontWeight="SemiBold" Foreground="{StaticResource HeaderBrush}" Margin="0,0,0,4"/>
                     <ComboBox x:Name="CategoryBox" Padding="8,7" BorderBrush="{StaticResource GardenBorderBrush}" Background="#FFFFFA"/>
                 </StackPanel>
-                <Button Grid.Column="7" Content="Add ingredient" Click="Add_Click" Margin="10,21,0,0"
+                <Button Grid.Column="9" Content="Add ingredient" Click="Add_Click" Margin="10,21,0,0"
                         VerticalAlignment="Top" Background="{StaticResource LemonBrush}" Foreground="{StaticResource DarkTextBrush}"/>
             </Grid>
 

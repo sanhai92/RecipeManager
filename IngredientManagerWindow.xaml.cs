@@ -37,9 +37,10 @@ public partial class IngredientManagerWindow : Window
     {
         try
         {
-            _database.AddIngredient(NameBox.Text, PluralNameBox.Text, SelectedSeason(), SelectedCategory());
+            _database.AddIngredient(NameBox.Text, PluralNameBox.Text, AliasesBox.Text, SelectedSeason(), SelectedCategory());
             NameBox.Clear();
             PluralNameBox.Clear();
+            AliasesBox.Clear();
             SeasonBox.SelectedIndex = 0;
             CategoryBox.SelectedIndex = 0;
             Reload();
@@ -59,7 +60,7 @@ public partial class IngredientManagerWindow : Window
         }
         try
         {
-            _database.RenameIngredient(selected.Id, NameBox.Text, PluralNameBox.Text, SelectedSeason(), SelectedCategory());
+            _database.RenameIngredient(selected.Id, NameBox.Text, PluralNameBox.Text, AliasesBox.Text, SelectedSeason(), SelectedCategory());
             Reload(selected.Id);
         }
         catch (Exception ex)
@@ -86,6 +87,7 @@ public partial class IngredientManagerWindow : Window
         }
         NameBox.Clear();
         PluralNameBox.Clear();
+        AliasesBox.Clear();
         SeasonBox.SelectedIndex = 0;
         CategoryBox.SelectedIndex = 0;
         Reload();
@@ -96,6 +98,7 @@ public partial class IngredientManagerWindow : Window
         if (SelectedIngredient is not { } selected) return;
         NameBox.Text = selected.Name;
         PluralNameBox.Text = selected.PluralName;
+        AliasesBox.Text = selected.Aliases;
         SeasonBox.SelectedItem = string.IsNullOrWhiteSpace(selected.Season) ? "No season" : selected.Season;
         CategoryBox.SelectedItem = string.IsNullOrWhiteSpace(selected.Category) ? "No category" : selected.Category;
     }

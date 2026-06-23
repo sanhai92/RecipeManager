@@ -6,7 +6,7 @@ namespace RecipeManager.Data;
 
 public sealed class DatabaseService
 {
-    private const int CurrentSchemaVersion = 2;
+    private const int CurrentSchemaVersion = 4;
     private const int BackupRetentionCount = 5;
     private readonly string _databasePath;
     private readonly string _backupsFolder;
@@ -163,8 +163,18 @@ public sealed class DatabaseService
                 FOREIGN KEY (RecipeId) REFERENCES Recipes(Id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS RecipeTags (
+                Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                RecipeId INTEGER NOT NULL,
+                Name TEXT NOT NULL COLLATE NOCASE,
+                SortOrder INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (RecipeId) REFERENCES Recipes(Id) ON DELETE CASCADE,
+                UNIQUE (RecipeId, Name)
+            );
+
             CREATE INDEX IF NOT EXISTS IX_Ingredients_RecipeId ON Ingredients(RecipeId);
             CREATE INDEX IF NOT EXISTS IX_Tools_RecipeId ON Tools(RecipeId);
+            CREATE INDEX IF NOT EXISTS IX_RecipeTags_RecipeId ON RecipeTags(RecipeId);
 
             CREATE TABLE IF NOT EXISTS AppMetadata (
                 Key TEXT PRIMARY KEY,
@@ -175,6 +185,7 @@ public sealed class DatabaseService
                 Id INTEGER PRIMARY KEY AUTOINCREMENT,
                 Name TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 PluralName TEXT NOT NULL DEFAULT '',
+                Aliases TEXT NOT NULL DEFAULT '',
                 Season TEXT NOT NULL DEFAULT '',
                 Category TEXT NOT NULL DEFAULT ''
             );
@@ -188,7 +199,9 @@ public sealed class DatabaseService
         EnsureColumn(connection, transaction, "Ingredients", "Unit", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, transaction, "IngredientLibrary", "Season", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, transaction, "IngredientLibrary", "PluralName", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, transaction, "IngredientLibrary", "Aliases", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, transaction, "IngredientLibrary", "Category", "TEXT NOT NULL DEFAULT ''");
+        SeedRecommendedIngredientAliases(connection, transaction);
         if (seedExistingIngredients)
             SeedIngredientLibrary(connection, transaction);
 
@@ -229,6 +242,7 @@ public sealed class DatabaseService
         {
             recipe.Ingredients = GetIngredients(connection, recipe.Id);
             recipe.Tools = GetChildItems(connection, "Tools", recipe.Id);
+            recipe.Tags = GetChildItems(connection, "RecipeTags", recipe.Id);
         }
 
         return recipes;
@@ -238,7 +252,7 @@ public sealed class DatabaseService
     {
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, Name, PluralName, Season, Category FROM IngredientLibrary ORDER BY Name COLLATE NOCASE";
+        command.CommandText = "SELECT Id, Name, PluralName, Aliases, Season, Category FROM IngredientLibrary ORDER BY Name COLLATE NOCASE";
         using var reader = command.ExecuteReader();
         var ingredients = new List<IngredientDefinition>();
         while (reader.Read())
@@ -248,22 +262,24 @@ public sealed class DatabaseService
                 Id = reader.GetInt64(0),
                 Name = reader.GetString(1),
                 PluralName = reader.GetString(2),
-                Season = reader.GetString(3),
-                Category = reader.GetString(4)
+                Aliases = reader.GetString(3),
+                Season = reader.GetString(4),
+                Category = reader.GetString(5)
             });
         }
         return ingredients;
     }
 
-    public void AddIngredient(string name, string pluralName, string season, string category)
+    public void AddIngredient(string name, string pluralName, string aliases, string season, string category)
     {
         name = name.Trim();
         if (name.Length == 0) throw new ArgumentException("Enter an ingredient name.");
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO IngredientLibrary (Name, PluralName, Season, Category) VALUES ($name, $pluralName, $season, $category)";
+        command.CommandText = "INSERT INTO IngredientLibrary (Name, PluralName, Aliases, Season, Category) VALUES ($name, $pluralName, $aliases, $season, $category)";
         command.Parameters.AddWithValue("$name", name);
         command.Parameters.AddWithValue("$pluralName", pluralName.Trim());
+        command.Parameters.AddWithValue("$aliases", aliases.Trim());
         command.Parameters.AddWithValue("$season", season.Trim());
         command.Parameters.AddWithValue("$category", category.Trim());
         try { command.ExecuteNonQuery(); }
@@ -273,7 +289,7 @@ public sealed class DatabaseService
         }
     }
 
-    public void RenameIngredient(long id, string newName, string pluralName, string season, string category)
+    public void RenameIngredient(long id, string newName, string pluralName, string aliases, string season, string category)
     {
         newName = newName.Trim();
         if (newName.Length == 0) throw new ArgumentException("Enter an ingredient name.");
@@ -293,9 +309,10 @@ public sealed class DatabaseService
         {
             using var updateLibrary = connection.CreateCommand();
             updateLibrary.Transaction = transaction;
-            updateLibrary.CommandText = "UPDATE IngredientLibrary SET Name=$newName, PluralName=$pluralName, Season=$season, Category=$category WHERE Id=$id";
+            updateLibrary.CommandText = "UPDATE IngredientLibrary SET Name=$newName, PluralName=$pluralName, Aliases=$aliases, Season=$season, Category=$category WHERE Id=$id";
             updateLibrary.Parameters.AddWithValue("$newName", newName);
             updateLibrary.Parameters.AddWithValue("$pluralName", pluralName.Trim());
+            updateLibrary.Parameters.AddWithValue("$aliases", aliases.Trim());
             updateLibrary.Parameters.AddWithValue("$season", season.Trim());
             updateLibrary.Parameters.AddWithValue("$category", category.Trim());
             updateLibrary.Parameters.AddWithValue("$id", id);
@@ -426,6 +443,7 @@ public sealed class DatabaseService
 
         InsertIngredients(connection, transaction, recipe.Id, recipe.Ingredients, libraryAdditions);
         InsertChildren(connection, transaction, "Tools", recipe.Id, recipe.Tools);
+        InsertChildren(connection, transaction, "RecipeTags", recipe.Id, recipe.Tags);
         transaction.Commit();
         return recipe.Id;
     }
@@ -557,9 +575,10 @@ public sealed class DatabaseService
             {
                 using var libraryCommand = connection.CreateCommand();
                 libraryCommand.Transaction = transaction;
-                libraryCommand.CommandText = "INSERT OR IGNORE INTO IngredientLibrary (Name, PluralName, Season, Category) VALUES ($name, $pluralName, $season, $category)";
+                libraryCommand.CommandText = "INSERT OR IGNORE INTO IngredientLibrary (Name, PluralName, Aliases, Season, Category) VALUES ($name, $pluralName, $aliases, $season, $category)";
                 libraryCommand.Parameters.AddWithValue("$name", item.Name.Trim());
                 libraryCommand.Parameters.AddWithValue("$pluralName", libraryIngredient.PluralName.Trim());
+                libraryCommand.Parameters.AddWithValue("$aliases", libraryIngredient.Aliases.Trim());
                 libraryCommand.Parameters.AddWithValue("$season", libraryIngredient.Season.Trim());
                 libraryCommand.Parameters.AddWithValue("$category", libraryIngredient.Category.Trim());
                 libraryCommand.ExecuteNonQuery();
@@ -596,11 +615,32 @@ public sealed class DatabaseService
         alter.ExecuteNonQuery();
     }
 
+    private static void SeedRecommendedIngredientAliases(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        var recommendations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Potato"] = "aardappel, aardappels, aardappelen",
+            ["Apple"] = "appel, appels, appelen",
+            ["Orange"] = "sinaasappel, sinaasappels, sinaasappelen",
+            ["Carrot"] = "wortel, wortels, wortelen",
+            ["Vegetable"] = "groente, groenten, groentes"
+        };
+        foreach (var (name, aliases) in recommendations)
+        {
+            using var update = connection.CreateCommand();
+            update.Transaction = transaction;
+            update.CommandText = "UPDATE IngredientLibrary SET Aliases=$aliases WHERE Name=$name COLLATE NOCASE AND TRIM(Aliases)=''";
+            update.Parameters.AddWithValue("$aliases", aliases);
+            update.Parameters.AddWithValue("$name", name);
+            update.ExecuteNonQuery();
+        }
+    }
+
     private static void DeleteChildren(SqliteConnection connection, SqliteTransaction transaction, long recipeId)
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "DELETE FROM Ingredients WHERE RecipeId=$id; DELETE FROM Tools WHERE RecipeId=$id;";
+        command.CommandText = "DELETE FROM Ingredients WHERE RecipeId=$id; DELETE FROM Tools WHERE RecipeId=$id; DELETE FROM RecipeTags WHERE RecipeId=$id;";
         command.Parameters.AddWithValue("$id", recipeId);
         command.ExecuteNonQuery();
     }

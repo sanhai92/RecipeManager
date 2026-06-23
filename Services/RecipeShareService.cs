@@ -11,7 +11,9 @@ public sealed record DecodedRecipeShare(Recipe Recipe, IReadOnlyList<IngredientD
 
 public static class RecipeShareService
 {
-    private const string Prefix = "RM1:";
+    private const string LegacyPrefix = "RM1:";
+    private const string BeginMarker = "RM1-BEGIN:";
+    private const string EndMarker = ":RM1-END";
     private const int MaximumCodeLength = 100_000;
     private const int MaximumDecodedBytes = 1_000_000;
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -30,18 +32,18 @@ public static class RecipeShareService
             Servings = recipe.Servings,
             Instructions = recipe.Instructions,
             SourceUrl = recipe.SourceUrl,
+            Tags = [.. recipe.Tags],
             Ingredients = recipe.Ingredients.Select(item =>
             {
                 var definition = definitions.FirstOrDefault(candidate =>
-                    candidate.Name.Equals(item.Name, StringComparison.OrdinalIgnoreCase)
-                    || (!string.IsNullOrWhiteSpace(candidate.PluralName)
-                        && candidate.PluralName.Equals(item.Name, StringComparison.OrdinalIgnoreCase)));
+                    BilingualSearchService.MatchesIngredient(candidate, item.Name));
                 return new SharedIngredient
                 {
                     Name = item.Name,
                     Quantity = item.Quantity,
                     Unit = item.Unit,
                     PluralName = definition?.PluralName ?? string.Empty,
+                    Aliases = definition?.Aliases ?? string.Empty,
                     Season = definition?.Season ?? string.Empty,
                     Category = definition?.Category ?? string.Empty
                 };
@@ -54,23 +56,37 @@ public static class RecipeShareService
         using (var gzip = new GZipStream(output, CompressionLevel.SmallestSize, leaveOpen: true))
             gzip.Write(json);
 
-        return Prefix + Convert.ToBase64String(output.ToArray())
+        return BeginMarker + Convert.ToBase64String(output.ToArray())
             .TrimEnd('=')
             .Replace('+', '-')
-            .Replace('/', '_');
+            .Replace('/', '_') + EndMarker;
     }
 
     public static DecodedRecipeShare Decode(string code)
     {
         var compactCode = string.Concat((code ?? string.Empty).Where(c => !char.IsWhiteSpace(c)));
-        if (!compactCode.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase))
-            throw new FormatException("This is not a Recipe Manager sharing code. It should begin with RM1:.");
         if (compactCode.Length > MaximumCodeLength)
             throw new FormatException("This recipe code is too large to import safely.");
 
+        string payloadCode;
+        if (compactCode.StartsWith(BeginMarker, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!compactCode.EndsWith(EndMarker, StringComparison.OrdinalIgnoreCase))
+                throw new FormatException("This recipe code is incomplete. It should end with RM1-END.");
+            payloadCode = compactCode[BeginMarker.Length..^EndMarker.Length];
+        }
+        else if (compactCode.StartsWith(LegacyPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            payloadCode = compactCode[LegacyPrefix.Length..];
+        }
+        else
+        {
+            throw new FormatException("This is not a Recipe Manager sharing code. It should begin with RM1-BEGIN.");
+        }
+
         try
         {
-            var payload = compactCode[Prefix.Length..].Replace('-', '+').Replace('_', '/');
+            var payload = payloadCode.Replace('-', '+').Replace('_', '/');
             payload = payload.PadRight(payload.Length + ((4 - payload.Length % 4) % 4), '=');
             byte[] compressed;
             try
@@ -101,11 +117,13 @@ public static class RecipeShareService
             shared.SourceUrl ??= string.Empty;
             shared.Ingredients ??= [];
             shared.Tools ??= [];
+            shared.Tags ??= [];
             foreach (var ingredient in shared.Ingredients.Where(item => item is not null))
             {
                 ingredient.Name ??= string.Empty;
                 ingredient.Unit ??= string.Empty;
                 ingredient.PluralName ??= string.Empty;
+                ingredient.Aliases ??= string.Empty;
                 ingredient.Season ??= string.Empty;
                 ingredient.Category ??= string.Empty;
             }
@@ -118,6 +136,8 @@ public static class RecipeShareService
                 Servings = shared.Servings,
                 Instructions = shared.Instructions.Trim(),
                 SourceUrl = shared.SourceUrl.Trim(),
+                Tags = shared.Tags.Select(tag => tag.Trim()).Where(tag => tag.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList(),
                 Ingredients = shared.Ingredients.Select(item => new RecipeIngredient
                 {
                     Name = item.Name.Trim(),
@@ -130,6 +150,7 @@ public static class RecipeShareService
             {
                 Name = item.Name.Trim(),
                 PluralName = item.PluralName.Trim(),
+                Aliases = item.Aliases.Trim(),
                 Season = item.Season.Trim(),
                 Category = item.Category.Trim()
             }).ToList();
@@ -155,19 +176,22 @@ public static class RecipeShareService
             throw new FormatException("The shared recipe has an invalid serving count.");
         if (recipe.Instructions.Length > 200_000 || recipe.SourceUrl.Length > 2_000 || recipe.Cuisine.Length > 200)
             throw new FormatException("The shared recipe contains text that is too long.");
-        if (recipe.Ingredients.Count > 200 || recipe.Tools.Count > 100)
-            throw new FormatException("The shared recipe contains too many ingredients or tools.");
+        if (recipe.Ingredients.Count > 200 || recipe.Tools.Count > 100 || recipe.Tags.Count > 50)
+            throw new FormatException("The shared recipe contains too many ingredients, tools, or tags.");
         if (recipe.Ingredients.Any(item => item is null
                                            || string.IsNullOrWhiteSpace(item.Name)
                                            || item.Name.Length > 200
                                            || item.Unit.Length > 50
                                            || item.PluralName.Length > 200
+                                           || item.Aliases.Length > 1_000
                                            || item.Season.Length > 50
                                            || item.Category.Length > 100
                                            || item.Quantity is <= 0 or > 1_000_000))
             throw new FormatException("The shared recipe contains an invalid ingredient.");
         if (recipe.Tools.Any(tool => tool.Length > 200))
             throw new FormatException("The shared recipe contains an invalid kitchen tool.");
+        if (recipe.Tags.Any(tag => string.IsNullOrWhiteSpace(tag) || tag.Length > 50))
+            throw new FormatException("The shared recipe contains an invalid tag.");
     }
 
     private sealed class SharedRecipe
@@ -180,6 +204,7 @@ public static class RecipeShareService
         [JsonPropertyName("u")] public string SourceUrl { get; set; } = string.Empty;
         [JsonPropertyName("g")] public List<SharedIngredient> Ingredients { get; set; } = [];
         [JsonPropertyName("k")] public List<string> Tools { get; set; } = [];
+        [JsonPropertyName("a")] public List<string> Tags { get; set; } = [];
     }
 
     private sealed class SharedIngredient
@@ -188,6 +213,7 @@ public static class RecipeShareService
         [JsonPropertyName("q")] public double? Quantity { get; set; }
         [JsonPropertyName("u")] public string Unit { get; set; } = string.Empty;
         [JsonPropertyName("p")] public string PluralName { get; set; } = string.Empty;
+        [JsonPropertyName("x")] public string Aliases { get; set; } = string.Empty;
         [JsonPropertyName("s")] public string Season { get; set; } = string.Empty;
         [JsonPropertyName("c")] public string Category { get; set; } = string.Empty;
     }

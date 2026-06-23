@@ -7,7 +7,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>RecipeManager</AssemblyName>
     <RootNamespace>RecipeManager</RootNamespace>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
     <UpdateRepository Condition="'$(UpdateRepository)' == ''">sanhai92/RecipeManager</UpdateRepository>
   </PropertyGroup>
 
@@ -17,5 +17,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="Scripts\OfflineOcr.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Compile Remove="OcrSmoke\**\*.cs" />
   </ItemGroup>
 </Project>

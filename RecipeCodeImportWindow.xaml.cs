@@ -16,7 +16,8 @@ public partial class RecipeCodeImportWindow : Window
             try
             {
                 var clipboardText = Clipboard.ContainsText() ? Clipboard.GetText().Trim() : string.Empty;
-                if (clipboardText.StartsWith("RM1:", StringComparison.OrdinalIgnoreCase))
+                if (clipboardText.StartsWith("RM1-BEGIN:", StringComparison.OrdinalIgnoreCase)
+                    || clipboardText.StartsWith("RM1:", StringComparison.OrdinalIgnoreCase))
                     CodeBox.Text = clipboardText;
             }
             catch

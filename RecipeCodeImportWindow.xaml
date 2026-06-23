@@ -13,10 +13,10 @@
 
         <TextBlock Text="Import a shared recipe" FontSize="23" FontWeight="Bold" Foreground="{StaticResource HeaderBrush}"/>
         <TextBlock Grid.Row="1" Margin="0,6,0,14" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
-                   Text="Paste an RM1 sharing code below. You will see the complete recipe in the editor before anything is saved."/>
+                   Text="Paste an RM1 sharing code below. New codes begin with RM1-BEGIN and end with RM1-END. You will see the complete recipe before anything is saved."/>
         <TextBox x:Name="CodeBox" Grid.Row="2" AcceptsReturn="True" TextWrapping="Wrap"
                  VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="13"
-                 ToolTip="Recipe codes begin with RM1:"/>
+                 ToolTip="Recipe codes begin with RM1-BEGIN and end with RM1-END"/>
         <Grid Grid.Row="3" Margin="0,16,0,0">
             <TextBlock x:Name="ErrorText" Foreground="#A53528" VerticalAlignment="Center" TextWrapping="Wrap"/>
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">

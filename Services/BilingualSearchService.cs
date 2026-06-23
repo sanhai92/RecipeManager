@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using RecipeManager.Models;
 
 namespace RecipeManager.Services;
 
@@ -9,7 +10,7 @@ public static class BilingualSearchService
     {
         ["paddenstoel"] = "mushroom", ["paddenstoelen"] = "mushroom", ["champignon"] = "mushroom", ["champignons"] = "mushroom", ["mushrooms"] = "mushroom",
         ["appel"] = "apple", ["appels"] = "apple", ["apples"] = "apple",
-        ["aardappel"] = "potato", ["aardappelen"] = "potato", ["potatoes"] = "potato",
+        ["aardappel"] = "potato", ["aardappels"] = "potato", ["aardappelen"] = "potato", ["potatoes"] = "potato",
         ["ui"] = "onion", ["uien"] = "onion", ["onions"] = "onion",
         ["knoflook"] = "garlic", ["wortel"] = "carrot", ["wortels"] = "carrot", ["carrots"] = "carrot",
         ["tomaat"] = "tomato", ["tomaten"] = "tomato", ["tomatoes"] = "tomato",
@@ -59,6 +60,9 @@ public static class BilingualSearchService
             || normalizedLeft.Contains(normalizedRight, StringComparison.Ordinal)
             || normalizedRight.Contains(normalizedLeft, StringComparison.Ordinal);
     }
+
+    public static bool MatchesIngredient(IngredientDefinition ingredient, string value) =>
+        ingredient.AllNames.Any(name => AreEquivalent(value, name));
 
     private static string Canonicalize(string value)
     {

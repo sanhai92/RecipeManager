@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Windows;
 using RecipeManager.Models;
+using RecipeManager.Services;
 
 namespace RecipeManager;
 
@@ -23,9 +24,7 @@ public partial class SharedRecipePreviewWindow : Window
         _ingredientPreviews = recipe.Ingredients.Select(ingredient =>
         {
             var known = definitions.Any(definition =>
-                definition.Name.Equals(ingredient.Name, StringComparison.OrdinalIgnoreCase)
-                || (!string.IsNullOrWhiteSpace(definition.PluralName)
-                    && definition.PluralName.Equals(ingredient.Name, StringComparison.OrdinalIgnoreCase)));
+                BilingualSearchService.MatchesIngredient(definition, ingredient.Name));
             var sharedDefinition = sharedDefinitions.FirstOrDefault(definition =>
                 definition.Name.Equals(ingredient.Name, StringComparison.OrdinalIgnoreCase));
             return new SharedIngredientPreview(ingredient, known, sharedDefinition);
@@ -38,6 +37,8 @@ public partial class SharedRecipePreviewWindow : Window
             $"{recipe.CookingTimeMinutes} min",
             $"{recipe.Servings} serving{(recipe.Servings == 1 ? string.Empty : "s")}" 
         }.Where(text => text is not null));
+        if (recipe.Tags.Count > 0)
+            RecipeSummaryText.Text += $"  |  {string.Join("  ", recipe.Tags.Select(tag => "#" + tag))}";
         IngredientsList.ItemsSource = _ingredientPreviews;
         InstructionsText.Text = recipe.Instructions;
         ToolsText.Text = recipe.Tools.Count == 0 ? "No special tools" : string.Join(", ", recipe.Tools);
@@ -60,6 +61,7 @@ public partial class SharedRecipePreviewWindow : Window
         public string PluralName { get; }
         public string Season { get; }
         public string Category { get; }
+        public string Aliases { get; }
         public string StatusText => IsKnown
             ? "Already available - will not be added again"
             : "New to your ingredients";
@@ -76,6 +78,7 @@ public partial class SharedRecipePreviewWindow : Window
             PluralName = sharedDefinition?.PluralName ?? string.Empty;
             Season = sharedDefinition?.Season ?? string.Empty;
             Category = sharedDefinition?.Category ?? string.Empty;
+            Aliases = sharedDefinition?.Aliases ?? string.Empty;
             var quantity = ingredient.Quantity?.ToString("0.##", CultureInfo.CurrentCulture);
             QuantityText = string.Join(" ", new[] { quantity, ingredient.Unit }
                 .Where(part => !string.IsNullOrWhiteSpace(part)));
@@ -85,6 +88,7 @@ public partial class SharedRecipePreviewWindow : Window
                 : string.Join("  |  ", new[]
                 {
                     string.IsNullOrWhiteSpace(PluralName) ? null : $"Plural: {PluralName}",
+                    string.IsNullOrWhiteSpace(Aliases) ? null : $"Aliases: {Aliases}",
                     string.IsNullOrWhiteSpace(Season) ? null : $"Season: {Season}",
                     string.IsNullOrWhiteSpace(Category) ? null : $"Category: {Category}"
                 }.Where(detail => detail is not null));
@@ -94,6 +98,7 @@ public partial class SharedRecipePreviewWindow : Window
         {
             Name = Name,
             PluralName = PluralName,
+            Aliases = Aliases,
             Season = Season,
             Category = Category
         };

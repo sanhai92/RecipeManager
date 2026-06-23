@@ -30,8 +30,19 @@ public static class ReleaseNotesService
             new("Plural and season details are shared", "New ingredients can keep their plural name and seasonal information."),
             new("Organize ingredients by category", "Ingredients can be labeled as fruit, vegetable, meat, dairy, and more. Categories are included in RM1 sharing codes."),
             new("Vegan starter recipes", "New installations include twenty vegan recipes with quantities, tools, cooking times, and categorized ingredients for easy testing."),
+            new("Free-form recipe tags", "Add your own tags to recipes, search by them, and keep them when sharing with RM1 codes."),
+            new("Import a recipe photo offline", "Turn one or more recipe photos into an editable draft using Windows OCR. The photos and recognized text stay on your computer."),
+            new("Ingredient aliases", "Store multiple Dutch, English, singular, or plural names for an ingredient. Aliases are used by search, photo import, and RM1 sharing."),
             new("Find recipes by name", "Search by partial names or small spelling mistakes."),
             new("Cleaner recipe list", "The main list now focuses on recipe names and favorites, with clearer button hover colors and copy confirmations.")
+        ]),
+        new("1.0.4", "Offline photo import and smarter ingredients",
+        [
+            new("Import recipe photos offline", "Use a photo of a recipe to create an editable draft while keeping the image attached to the recipe."),
+            new("Clear import progress", "A small progress screen now shows while the app is reading a recipe photo."),
+            new("Better Dutch ingredient matching", "Common Dutch words and plurals such as aardappels, knoflook, and rode ui are matched to known ingredients more reliably."),
+            new("Review unrecognized photo text", "The editor shows the text that was found but not confidently imported, so nothing important disappears silently."),
+            new("Ingredient aliases", "Ingredients can store alternate names and plurals, and those aliases are included when sharing recipes.")
         ])
     ];
 

@@ -108,7 +108,8 @@ internal static class SampleRecipes
         Ingredients = [.. ingredients],
         Tools = [.. tools],
         Instructions = instructions,
-        IsFavorite = favorite
+        IsFavorite = favorite,
+        Tags = ["vegan", cuisine]
     };
 
     private static RecipeIngredient[] I(params (string Name, double Quantity, string Unit)[] items) => items
@@ -125,7 +126,8 @@ internal static class SampleRecipes
             { Name = item.Name, Quantity = item.Quantity, Unit = item.Unit }).ToList(),
         Tools = [.. recipe.Tools],
         Instructions = recipe.Instructions,
-        IsFavorite = recipe.IsFavorite
+        IsFavorite = recipe.IsFavorite,
+        Tags = [.. recipe.Tags]
     };
 
     private static string CategoryFor(string name) => name.ToLowerInvariant() switch

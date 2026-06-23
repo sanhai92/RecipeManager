@@ -5,7 +5,16 @@
         WindowStartupLocation="CenterOwner" Background="{StaticResource CanvasBrush}">
     <Border Margin="18" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource GardenBorderBrush}"
             BorderThickness="1" CornerRadius="10" Padding="24">
-        <Grid>
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right"
+                        Margin="0,16,0,0" Background="{StaticResource SurfaceBrush}">
+                <Button Content="Cancel" Click="Cancel_Click" Background="{StaticResource MintStrongBrush}"
+                        Foreground="{StaticResource DarkTextBrush}"/>
+                <Button Content="Save recipe" Click="Save_Click" Background="{StaticResource LemonBrush}"
+                        Foreground="{StaticResource DarkTextBrush}" Margin="0"/>
+            </StackPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid Margin="0,0,8,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
@@ -97,11 +106,17 @@
                     <ColumnDefinition Width="230"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel>
+                    <TextBlock Text="Tags (comma-separated)" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                    <TextBox x:Name="TagsBox" ToolTip="For example: quick, family, spicy" Margin="0,0,0,10"/>
                     <TextBlock Text="Recipe URL" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
                     <TextBox x:Name="UrlBox" ToolTip="For example: https://example.com/recipe"/>
                 </StackPanel>
                 <StackPanel Grid.Column="2">
                     <TextBlock Text="Picture" Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold" Margin="0,0,0,5"/>
+                    <Border x:Name="PicturePreviewBorder" Height="105" Margin="0,0,0,8" CornerRadius="7"
+                            BorderBrush="{StaticResource GardenBorderBrush}" BorderThickness="1" Visibility="Collapsed">
+                        <Image x:Name="PicturePreview" Stretch="UniformToFill"/>
+                    </Border>
                     <StackPanel Orientation="Horizontal">
                         <Button Content="Choose…" Click="ChoosePicture_Click" Padding="12,8"/>
                         <Button Content="Remove" Click="RemovePicture_Click" Background="{StaticResource PeachBrush}"
@@ -129,12 +144,19 @@
                 </StackPanel>
             </Grid>
 
-            <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,20,0,0">
-                <Button Content="Cancel" Click="Cancel_Click" Background="{StaticResource MintStrongBrush}"
-                        Foreground="{StaticResource DarkTextBrush}"/>
-                <Button Content="Save recipe" Click="Save_Click" Background="{StaticResource LemonBrush}"
-                        Foreground="{StaticResource DarkTextBrush}" Margin="0"/>
-            </StackPanel>
-        </Grid>
+            <Expander x:Name="PhotoTextReview" Grid.Row="5" Margin="0,16,0,0" Visibility="Collapsed"
+                      Header="Other text found in the photo" IsExpanded="True"
+                      Foreground="{StaticResource HeaderBrush}" FontWeight="SemiBold">
+                <StackPanel Margin="0,9,0,0">
+                    <TextBlock Text="Review this OCR transcript for details that were not placed confidently in the fields above. Text that OCR could not read at all can only be checked in the attached picture."
+                               TextWrapping="Wrap" FontWeight="Normal" Foreground="{StaticResource MutedBrush}" Margin="0,0,0,7"/>
+                    <TextBox x:Name="PhotoTextBox" Height="180" IsReadOnly="True" AcceptsReturn="True"
+                             TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" FontWeight="Normal"/>
+                </StackPanel>
+            </Expander>
+
+            </Grid>
+            </ScrollViewer>
+        </DockPanel>
     </Border>
 </Window>

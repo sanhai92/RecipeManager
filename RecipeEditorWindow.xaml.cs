@@ -2,6 +2,7 @@ using System.Windows;
 using System.IO;
 using System.Globalization;
 using Microsoft.Win32;
+using System.Windows.Media.Imaging;
 using RecipeManager.Models;
 using RecipeManager.Services;
 
@@ -12,7 +13,7 @@ public partial class RecipeEditorWindow : Window
     private readonly List<IngredientChoice> _ingredientChoices = [];
     public Recipe Recipe { get; }
 
-    public RecipeEditorWindow(IEnumerable<IngredientDefinition> ingredientLibrary, Recipe? recipe = null)
+    public RecipeEditorWindow(IEnumerable<IngredientDefinition> ingredientLibrary, Recipe? recipe = null, string? photoOcrText = null)
     {
         InitializeComponent();
         Recipe = recipe is null
@@ -34,13 +35,22 @@ public partial class RecipeEditorWindow : Window
                     Quantity = x.Quantity,
                     Unit = x.Unit
                 }).ToList(),
-                Tools = [.. recipe.Tools]
+                Tools = [.. recipe.Tools],
+                Tags = [.. recipe.Tags]
             };
+
+        var ingredientDefinitions = ingredientLibrary.ToList();
+        foreach (var recipeIngredient in Recipe.Ingredients)
+        {
+            var knownIngredient = ingredientDefinitions.FirstOrDefault(definition =>
+                BilingualSearchService.MatchesIngredient(definition, recipeIngredient.Name));
+            if (knownIngredient is not null)
+                recipeIngredient.Name = knownIngredient.Name;
+        }
 
         var selectedIngredients = Recipe.Ingredients
             .GroupBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
-        var ingredientDefinitions = ingredientLibrary.ToList();
         var libraryNames = ingredientDefinitions.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var externalIngredientNames = Recipe.Ingredients
             .Select(item => item.Name)
@@ -55,11 +65,11 @@ public partial class RecipeEditorWindow : Window
             .GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First());
         _ingredientChoices = availableIngredients
-            .OrderBy(x => x.Name, StringComparer.CurrentCultureIgnoreCase)
             .Select(x => new IngredientChoice
             {
                 Name = x.Name,
                 PluralName = x.PluralName,
+                Aliases = x.Aliases,
                 Season = x.Season,
                 Category = x.Category,
                 IsInLibrary = libraryNames.Contains(x.Name),
@@ -69,12 +79,14 @@ public partial class RecipeEditorWindow : Window
                     : string.Empty,
                 Unit = selectedIngredients.TryGetValue(x.Name, out existing) ? existing.Unit : string.Empty
             })
+            .OrderBy(choice => choice.IsInLibrary ? 1 : 0)
+            .ThenBy(choice => choice.Name, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
 
         if (externalIngredientNames.Count > 0)
         {
             ExternalIngredientsNotice.Text =
-                $"New ingredients for this recipe: {string.Join(", ", externalIngredientNames)}.";
+                $"New ingredients from this import are shown first: {string.Join(", ", externalIngredientNames)}.";
             ExternalIngredientsNotice.Visibility = Visibility.Visible;
         }
 
@@ -88,6 +100,12 @@ public partial class RecipeEditorWindow : Window
         UpdatePictureStatus();
         RefreshIngredientChoices();
         ToolsBox.Text = string.Join(Environment.NewLine, Recipe.Tools);
+        TagsBox.Text = string.Join(", ", Recipe.Tags);
+        if (!string.IsNullOrWhiteSpace(photoOcrText))
+        {
+            PhotoTextBox.Text = photoOcrText;
+            PhotoTextReview.Visibility = Visibility.Visible;
+        }
     }
 
     private void Save_Click(object sender, RoutedEventArgs e)
@@ -137,6 +155,7 @@ public partial class RecipeEditorWindow : Window
         Recipe.SourceUrl = UrlBox.Text.Trim();
         Recipe.Ingredients = ingredients;
         Recipe.Tools = SplitLines(ToolsBox.Text);
+        Recipe.Tags = SplitTags(TagsBox.Text);
         DialogResult = true;
     }
 
@@ -167,7 +186,25 @@ public partial class RecipeEditorWindow : Window
         UpdatePictureStatus();
     }
 
-    private void UpdatePictureStatus() => PictureStatusText.Text = Recipe.ImageData is { Length: > 0 } ? "Picture attached" : "No picture";
+    private void UpdatePictureStatus()
+    {
+        PictureStatusText.Text = Recipe.ImageData is { Length: > 0 } ? "Picture attached" : "No picture";
+        PicturePreview.Source = Recipe.ImageData is { Length: > 0 } ? LoadImage(Recipe.ImageData) : null;
+        PicturePreviewBorder.Visibility = Recipe.ImageData is { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static BitmapImage LoadImage(byte[] bytes)
+    {
+        using var stream = new MemoryStream(bytes);
+        var image = new BitmapImage();
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad;
+        image.DecodePixelWidth = 260;
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
+    }
 
     private void IngredientSearchBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
     {
@@ -178,12 +215,17 @@ public partial class RecipeEditorWindow : Window
     {
         var search = IngredientSearchBox?.Text.Trim() ?? string.Empty;
         IngredientChoicesList.ItemsSource = _ingredientChoices
-            .Where(x => search.Length == 0 || BilingualSearchService.IsLooseMatch($"{x.Name} {x.PluralName} {x.Category}", search))
+            .Where(x => search.Length == 0 || BilingualSearchService.IsLooseMatch($"{x.Name} {x.PluralName} {x.Aliases} {x.Category}", search))
             .ToList();
     }
 
     private static List<string> SplitLines(string text) => text
         .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Distinct(StringComparer.CurrentCultureIgnoreCase)
+        .ToList();
+
+    private static List<string> SplitTags(string text) => text
+        .Split([',', ';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
         .Distinct(StringComparer.CurrentCultureIgnoreCase)
         .ToList();
 }
