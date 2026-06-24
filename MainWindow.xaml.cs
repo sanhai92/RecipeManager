@@ -68,7 +68,7 @@ public partial class MainWindow : Window
     private void ReloadRecipes(long selectId = 0)
     {
         _allRecipes = _database.GetRecipes();
-        ApplyProteinIcons();
+        ApplyProteinIconsV2();
         RefreshCuisineFilter();
         ApplyFilters();
         if (selectId != 0)
@@ -198,6 +198,61 @@ public partial class MainWindow : Window
                 _ => "Vegetable"
             }).ToList();
         }
+    }
+
+    private void ApplyProteinIconsV2()
+    {
+        foreach (var recipe in _allRecipes)
+        {
+            var hasBeef = recipe.Ingredients.Any(ingredient => IsBeef(ingredient.Name));
+            var hasPork = recipe.Ingredients.Any(ingredient => IsPork(ingredient.Name));
+            var hasChicken = recipe.Ingredients.Any(ingredient => IsChicken(ingredient.Name));
+            var hasFish = recipe.Ingredients.Any(ingredient => IsFish(ingredient.Name));
+            var hasOtherMeat = recipe.Ingredients.Any(ingredient => IsOtherMeat(ingredient.Name));
+            var kinds = new List<string>();
+            var descriptions = new List<string>();
+
+            if (hasBeef) { kinds.Add("Beef"); descriptions.Add("Beef"); }
+            if (hasPork) { kinds.Add("Pork"); descriptions.Add("Pork"); }
+            if (hasOtherMeat) { kinds.Add("Meat"); descriptions.Add("Other meat"); }
+            if (hasFish) { kinds.Add("Fish"); descriptions.Add("Fish or seafood"); }
+            if (hasChicken) { kinds.Add("Chicken"); descriptions.Add("Chicken"); }
+            if (kinds.Count == 0)
+            {
+                kinds.Add("Vegetable");
+                descriptions.Add("No beef, pork, meat, fish, or chicken");
+            }
+
+            recipe.ProteinIcons = string.Join(" ", kinds);
+            recipe.ProteinIconsDescription = string.Join(", ", descriptions);
+            recipe.ProteinKinds = kinds;
+        }
+    }
+
+    private bool IsBeef(string ingredientName)
+    {
+        if (IsPlantBasedAlternative(ingredientName)) return false;
+        return BilingualSearchService.AreEquivalent(ingredientName, "beef")
+            || ContainsAny(ingredientName,
+                "beef", "ground beef", "minced beef", "steak", "brisket",
+                "rundvlees", "rundergehakt", "biefstuk", "rosbief", "gehakt");
+    }
+
+    private bool IsPork(string ingredientName)
+    {
+        if (IsPlantBasedAlternative(ingredientName)) return false;
+        return BilingualSearchService.AreEquivalent(ingredientName, "pork")
+            || ContainsAny(ingredientName,
+                "pork", "bacon", "ham", "prosciutto", "pancetta", "chorizo",
+                "varkensvlees", "spek", "varkenshaas", "karbonade");
+    }
+
+    private bool IsOtherMeat(string ingredientName)
+    {
+        if (IsPlantBasedAlternative(ingredientName) || IsBeef(ingredientName) || IsPork(ingredientName)
+            || IsChicken(ingredientName) || IsFish(ingredientName)) return false;
+        return FindIngredientCategory(ingredientName).Equals("Meat", StringComparison.OrdinalIgnoreCase)
+            || ContainsAny(ingredientName, "lamb", "veal", "sausage", "minced meat", "ground meat", "lam", "kalfsvlees", "worst");
     }
 
     private bool IsChicken(string ingredientName)
@@ -363,6 +418,77 @@ public partial class MainWindow : Window
             PhotoImportProgressOverlay.Visibility = Visibility.Collapsed;
             Mouse.OverrideCursor = null;
         }
+    }
+
+    private async void ImportRecipe_Click(object sender, RoutedEventArgs e)
+    {
+        var importWindow = new RecipeImportWindow { Owner = this };
+        if (importWindow.ShowDialog() != true) return;
+
+        try
+        {
+            Mouse.OverrideCursor = Cursors.Wait;
+            PhotoImportProgressOverlay.Visibility = Visibility.Visible;
+            StatusText.Text = importWindow.Source switch
+            {
+                RecipeImportSource.Website => "Reading recipe website...",
+                RecipeImportSource.Text => "Reading pasted recipe text...",
+                _ => "Importing recipe..."
+            };
+
+            if (importWindow.Source == RecipeImportSource.Text && LooksLikeRecipeShareCode(importWindow.ImportText))
+            {
+                PhotoImportProgressOverlay.Visibility = Visibility.Collapsed;
+                Mouse.OverrideCursor = null;
+                ProcessDecodedRecipeShare(RecipeShareService.Decode(importWindow.ImportText));
+                return;
+            }
+
+            var imported = importWindow.Source switch
+            {
+                RecipeImportSource.Website => await _photoImportService.ImportWebsiteAsync(importWindow.Url),
+                RecipeImportSource.Text => _photoImportService.ImportText(importWindow.ImportText),
+                _ => throw new InvalidOperationException("Choose a recipe import source first.")
+            };
+
+            PhotoImportProgressOverlay.Visibility = Visibility.Collapsed;
+            Mouse.OverrideCursor = null;
+            CompleteImportedRecipe(imported);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                $"The recipe could not be imported.\n\n{ex.Message}",
+                "Import failed", MessageBoxButton.OK, MessageBoxImage.Error);
+            StatusText.Text = "Recipe import failed";
+        }
+        finally
+        {
+            PhotoImportProgressOverlay.Visibility = Visibility.Collapsed;
+            Mouse.OverrideCursor = null;
+        }
+    }
+
+    private static bool LooksLikeRecipeShareCode(string text)
+    {
+        var trimmed = text.Trim();
+        return trimmed.StartsWith("RM1-BEGIN:", StringComparison.OrdinalIgnoreCase)
+            || trimmed.StartsWith("RM1:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void CompleteImportedRecipe(PhotoImportResult imported)
+    {
+        var editor = new RecipeEditorWindow(_database.GetIngredientLibrary(), imported.Recipe, imported.RawText) { Owner = this };
+        if (editor.ShowDialog() != true)
+        {
+            StatusText.Text = "Recipe import cancelled";
+            return;
+        }
+
+        var id = _database.Save(editor.Recipe);
+        LoadPantryChoices();
+        ReloadRecipes(id);
+        StatusText.Text = $"Imported {editor.Recipe.Title}";
     }
 
     private void Edit_Click(object sender, RoutedEventArgs e)
@@ -813,6 +939,11 @@ public partial class MainWindow : Window
     {
         var importWindow = new RecipeCodeImportWindow { Owner = this };
         if (importWindow.ShowDialog() != true || importWindow.DecodedShare is not { } decodedShare) return;
+        ProcessDecodedRecipeShare(decodedShare);
+    }
+
+    private void ProcessDecodedRecipeShare(DecodedRecipeShare decodedShare)
+    {
         var importedRecipe = decodedShare.Recipe;
         var ingredientLibrary = _database.GetIngredientLibrary();
 

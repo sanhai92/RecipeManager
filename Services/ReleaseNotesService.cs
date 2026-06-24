@@ -51,6 +51,13 @@ public static class ReleaseNotesService
             new("Clear editing guard", "Clicking outside the recipe panel while editing reminds you to save or cancel first, and briefly highlights the action buttons."),
             new("Better app icon", "The taskbar, app window, installer, and desktop shortcut now use a more recognizable Recipe Manager icon."),
             new("Polished dropdowns", "The main filters use the Fresh Garden pill style, while ingredient picking avoids unwanted edge-hover scrolling.")
+        ]),
+        new("1.0.6", "Cleaner recipe importing",
+        [
+            new("Import from websites", "Paste a recipe URL and the app will try to read the recipe title, servings, time, ingredients, and instructions into an editable preview."),
+            new("Import from plain text", "Paste recipe text from a website, PDF, chat, email, note, or RM1 sharing code without choosing photo or PDF options."),
+            new("Better Dutch recipe parsing", "Dutch headings such as Ingrediënten and Aan de slag, cooking times such as 25 min bereiden, and quantities such as 1 ½ el are recognized more reliably."),
+            new("Simpler import screen", "The import window now focuses on the two practical routes: website URL and pasted recipe text.")
         ])
     ];
 

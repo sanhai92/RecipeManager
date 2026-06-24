@@ -13,6 +13,21 @@
                     <Ellipse Width="6" Height="5" Canvas.Left="11" Canvas.Top="8" Fill="#FFF1D4"/>
                     <Path Data="M 4,14 C 8,10 11,15 18,9" Stroke="#F6A0A0" StrokeThickness="1.5"/>
                 </Canvas>
+                <Canvas x:Name="BeefIcon" Visibility="Collapsed">
+                    <Ellipse Width="19" Height="14" Canvas.Left="3" Canvas.Top="7" Fill="#8B3E2F" Stroke="#5F281F" StrokeThickness="1"/>
+                    <Ellipse Width="5" Height="4" Canvas.Left="9" Canvas.Top="11" Fill="#F7D6B1"/>
+                    <Path Data="M 4,9 C 0,3 6,2 8,7 M 20,9 C 24,3 18,2 16,7" Stroke="#5F281F" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                    <Ellipse Width="2" Height="2" Canvas.Left="8" Canvas.Top="9" Fill="#FFF4E0"/>
+                    <Ellipse Width="2" Height="2" Canvas.Left="15" Canvas.Top="9" Fill="#FFF4E0"/>
+                </Canvas>
+                <Canvas x:Name="PorkIcon" Visibility="Collapsed">
+                    <Ellipse Width="20" Height="16" Canvas.Left="2" Canvas.Top="5" Fill="#F29AA7" Stroke="#C86173" StrokeThickness="1"/>
+                    <Ellipse Width="10" Height="7" Canvas.Left="7" Canvas.Top="11" Fill="#F7B7C2" Stroke="#C86173" StrokeThickness="0.8"/>
+                    <Ellipse Width="1.8" Height="1.8" Canvas.Left="9.2" Canvas.Top="13.5" Fill="#9F3E52"/>
+                    <Ellipse Width="1.8" Height="1.8" Canvas.Left="13.2" Canvas.Top="13.5" Fill="#9F3E52"/>
+                    <Path Data="M 5,7 L 2,2 L 9,5 Z" Fill="#F29AA7" Stroke="#C86173" StrokeThickness="1"/>
+                    <Path Data="M 19,7 L 22,2 L 15,5 Z" Fill="#F29AA7" Stroke="#C86173" StrokeThickness="1"/>
+                </Canvas>
                 <Canvas x:Name="FishIcon" Visibility="Collapsed">
                     <Ellipse Width="17" Height="12" Canvas.Left="5" Canvas.Top="6" Fill="#35A7D8" Stroke="#187BA7" StrokeThickness="1"/>
                     <Path Data="M 6,7 L 0,3 L 0,21 L 6,17 Z" Fill="#258FC2"/>
@@ -33,6 +48,8 @@
             </Grid>
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding}" Value="Meat"><Setter TargetName="MeatIcon" Property="Visibility" Value="Visible"/></DataTrigger>
+                <DataTrigger Binding="{Binding}" Value="Beef"><Setter TargetName="BeefIcon" Property="Visibility" Value="Visible"/></DataTrigger>
+                <DataTrigger Binding="{Binding}" Value="Pork"><Setter TargetName="PorkIcon" Property="Visibility" Value="Visible"/></DataTrigger>
                 <DataTrigger Binding="{Binding}" Value="Fish"><Setter TargetName="FishIcon" Property="Visibility" Value="Visible"/></DataTrigger>
                 <DataTrigger Binding="{Binding}" Value="Chicken"><Setter TargetName="ChickenIcon" Property="Visibility" Value="Visible"/></DataTrigger>
                 <DataTrigger Binding="{Binding}" Value="Vegetable"><Setter TargetName="VegetableIcon" Property="Visibility" Value="Visible"/></DataTrigger>
@@ -620,9 +637,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Center">
                     <Button Content="＋ Add recipe" Click="Add_Click" Background="{StaticResource LemonBrush}"
                             Foreground="{StaticResource DarkTextBrush}" Padding="12,5"/>
-                    <Button Content="Import photo" Click="ImportPhoto_Click" Background="{StaticResource MintStrongBrush}"
-                            Foreground="{StaticResource DarkTextBrush}" Padding="12,5"/>
-                    <Button Content="Import code" Click="ImportRecipeCode_Click" Background="{StaticResource MintStrongBrush}"
+                    <Button Content="Import recipe" Click="ImportRecipe_Click" Background="{StaticResource MintStrongBrush}"
                             Foreground="{StaticResource DarkTextBrush}" Padding="12,5"/>
                     <Button Content="Export database" Click="BackupRecipes_Click" Background="{StaticResource MintStrongBrush}"
                             Foreground="{StaticResource DarkTextBrush}" Padding="12,5" Margin="0"/>
@@ -650,9 +665,9 @@
                     Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource GardenBorderBrush}"
                     BorderThickness="1" CornerRadius="14">
                 <StackPanel>
-                    <TextBlock Text="Reading your recipe photo…" FontFamily="Georgia" FontSize="22"
+                    <TextBlock Text="Importing your recipe..." FontFamily="Georgia" FontSize="22"
                                FontWeight="Bold" Foreground="{StaticResource HeaderBrush}" HorizontalAlignment="Center"/>
-                    <TextBlock Text="Rotating the image and recognizing its text locally. This can take about half a minute."
+                    <TextBlock Text="Preparing an editable recipe preview from the URL or pasted text."
                                TextWrapping="Wrap" TextAlignment="Center" Foreground="{StaticResource MutedBrush}"
                                Margin="0,10,0,17"/>
                     <ProgressBar Height="10" IsIndeterminate="True" Foreground="{StaticResource PrimaryBrush}"/>
