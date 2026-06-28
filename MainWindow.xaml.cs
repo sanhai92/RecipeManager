@@ -620,9 +620,19 @@ public partial class MainWindow : Window
 
     private void AddInlineIngredient_Click(object sender, RoutedEventArgs e)
     {
-        _inlineIngredientRows.Add(new InlineIngredientRow());
-        InlineIngredientsGrid.SelectedIndex = _inlineIngredientRows.Count - 1;
-        InlineIngredientsGrid.ScrollIntoView(InlineIngredientsGrid.SelectedItem);
+        var row = new InlineIngredientRow();
+        _inlineIngredientRows.Add(row);
+        InlineIngredientsGrid.SelectedItem = row;
+
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            InlineIngredientsGrid.UpdateLayout();
+            InlineIngredientsGrid.SelectedItem = row;
+            if (InlineIngredientsGrid.Columns.Count > 2)
+                InlineIngredientsGrid.CurrentCell = new DataGridCellInfo(row, InlineIngredientsGrid.Columns[2]);
+            InlineIngredientsGrid.ScrollIntoView(row);
+            InlineIngredientsGrid.Focus();
+        }), DispatcherPriority.Background);
     }
 
     private void RemoveInlineIngredient_Click(object sender, RoutedEventArgs e)
@@ -1177,6 +1187,37 @@ public partial class MainWindow : Window
         {
             MessageBox.Show(this, $"The backup could not be created.\n\n{ex.Message}",
                 "Backup failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private void ExportCollection_Click(object sender, RoutedEventArgs e)
+    {
+        var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmm", CultureInfo.InvariantCulture);
+        var dialog = new SaveFileDialog
+        {
+            Title = "Export recipe collection",
+            FileName = $"RecipeManager-Collection-{timestamp}.zip",
+            Filter = "Recipe collection zip (*.zip)|*.zip|All files (*.*)|*.*",
+            AddExtension = true,
+            DefaultExt = ".zip",
+            OverwritePrompt = true
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        try
+        {
+            var recipes = _database.GetRecipes();
+            var ingredientLibrary = _database.GetIngredientLibrary();
+            RecipeCollectionExportService.ExportZip(dialog.FileName, recipes, ingredientLibrary);
+            StatusText.Text = "Recipe collection exported";
+            MessageBox.Show(this,
+                $"Your recipe collection was exported successfully.\n\n{dialog.FileName}\n\nPictures were not included.",
+                "Export complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"The recipe collection could not be exported.\n\n{ex.Message}",
+                "Export failed", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 

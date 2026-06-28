@@ -58,6 +58,13 @@ public static class ReleaseNotesService
             new("Import from plain text", "Paste recipe text from a website, PDF, chat, email, note, or RM1 sharing code without choosing photo or PDF options."),
             new("Better Dutch recipe parsing", "Dutch headings such as Ingrediënten and Aan de slag, cooking times such as 25 min bereiden, and quantities such as 1 ½ el are recognized more reliably."),
             new("Simpler import screen", "The import window now focuses on the two practical routes: website URL and pasted recipe text.")
+        ]),
+        new("1.0.7", "Collection export for PocketRecipe",
+        [
+            new("Export your recipe collection", "Use Export collection to create a zip file with recipes and the ingredient library for one-time transfer to another app."),
+            new("PocketRecipe-friendly format", "The zip contains readable JSON files for metadata, ingredients, and recipes, so Android import can be built without depending on the Windows database layout."),
+            new("No pictures included", "Collection exports intentionally skip recipe pictures to keep the file smaller and easier to move."),
+            new("Ingredient rows are easier to add", "When editing a recipe, newly added ingredient rows now scroll into view instead of appearing hidden at the bottom.")
         ])
     ];
 

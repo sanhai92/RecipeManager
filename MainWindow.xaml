@@ -551,7 +551,7 @@
                                                   HeadersVisibility="Column" GridLinesVisibility="None" RowHeaderWidth="0"
                                                   Height="285" Background="#FFFFFA" BorderBrush="{StaticResource GardenBorderBrush}"
                                                   BorderThickness="1" AlternatingRowBackground="{StaticResource MintBrush}"
-                                                  ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                                                   ScrollViewer.CanContentScroll="False"
                                                   ScrollViewer.PanningMode="None">
                                             <DataGrid.Columns>
@@ -638,6 +638,8 @@
                     <Button Content="＋ Add recipe" Click="Add_Click" Background="{StaticResource LemonBrush}"
                             Foreground="{StaticResource DarkTextBrush}" Padding="12,5"/>
                     <Button Content="Import recipe" Click="ImportRecipe_Click" Background="{StaticResource MintStrongBrush}"
+                            Foreground="{StaticResource DarkTextBrush}" Padding="12,5"/>
+                    <Button Content="Export collection" Click="ExportCollection_Click" Background="{StaticResource MintStrongBrush}"
                             Foreground="{StaticResource DarkTextBrush}" Padding="12,5"/>
                     <Button Content="Export database" Click="BackupRecipes_Click" Background="{StaticResource MintStrongBrush}"
                             Foreground="{StaticResource DarkTextBrush}" Padding="12,5" Margin="0"/>
